@@ -15,11 +15,15 @@ DATABASE_PATH = BASE_DIR / "data" / "bill_db.sqlite"
 DATA_DIR = BASE_DIR / "data"
 MODELS_DIR = BASE_DIR / "data" / "models"
 TEST_DATA_DIR = BASE_DIR / "data" / "test_data"
+EXPORTS_DIR = BASE_DIR / "data" / "exports"
+UPLOADS_DIR = BASE_DIR / "data" / "uploads"
 
 # 确保目录存在
 DATA_DIR.mkdir(exist_ok=True)
 MODELS_DIR.mkdir(exist_ok=True)
 TEST_DATA_DIR.mkdir(exist_ok=True)
+EXPORTS_DIR.mkdir(exist_ok=True)
+UPLOADS_DIR.mkdir(exist_ok=True)
 
 # API配置
 API_V1_PREFIX = "/api/v1"
