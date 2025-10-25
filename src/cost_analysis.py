@@ -7,12 +7,19 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-import seaborn as sns
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 import json
 import base64
 from io import BytesIO
+
+# 尝试导入seaborn，如果失败则跳过
+try:
+    import seaborn as sns
+    HAS_SEABORN = True
+except ImportError:
+    HAS_SEABORN = False
+    print("Warning: seaborn not available, some visualization features may be limited")
 
 from .database import db_manager
 from .config import CHART_CONFIG

@@ -12,7 +12,8 @@ import uvicorn
 import os
 
 # 导入自定义模块
-from .database import db_manager, init_database
+from .database import db_manager
+from fix_sqlalchemy_session import get_bills_simple, get_bill_by_id, create_bill_simple, get_spending_summary_simple, init_database
 from .bill_query import query_processor
 from .cost_analysis import cost_analyzer
 from .ai_services import user_profiler, recommendation_engine, intelligent_analyzer
@@ -133,24 +134,11 @@ async def create_bill(bill: BillCreate, user_id: int = 1):
 async def get_bills(user_id: int = 1, limit: int = 100, offset: int = 0):
     """获取账单列表"""
     try:
-        bills = db_manager.get_bills(user_id, limit, offset)
+        bills = get_bills_simple(user_id, limit, offset)
         
         return {
             "success": True,
-            "data": [
-                {
-                    "id": bill.id,
-                    "consume_time": bill.consume_time.isoformat(),
-                    "amount": bill.amount,
-                    "merchant": bill.merchant,
-                    "category": bill.category,
-                    "payment_method": bill.payment_method,
-                    "location": bill.location,
-                    "description": bill.description,
-                    "created_at": bill.created_at.isoformat()
-                }
-                for bill in bills
-            ],
+            "data": bills,
             "total": len(bills)
         }
     except Exception as e:
@@ -160,25 +148,14 @@ async def get_bills(user_id: int = 1, limit: int = 100, offset: int = 0):
 async def get_bill(bill_id: int, user_id: int = 1):
     """获取单个账单详情"""
     try:
-        bills = db_manager.get_bills(user_id, limit=1000)
-        bill = next((b for b in bills if b.id == bill_id), None)
+        bill = get_bill_by_id(bill_id)
         
-        if not bill:
+        if not bill or bill['user_id'] != user_id:
             raise HTTPException(status_code=404, detail="账单不存在")
         
         return {
             "success": True,
-            "data": {
-                "id": bill.id,
-                "consume_time": bill.consume_time.isoformat(),
-                "amount": bill.amount,
-                "merchant": bill.merchant,
-                "category": bill.category,
-                "payment_method": bill.payment_method,
-                "location": bill.location,
-                "description": bill.description,
-                "created_at": bill.created_at.isoformat()
-            }
+            "data": bill
         }
     except HTTPException:
         raise
@@ -265,7 +242,7 @@ async def intelligent_query(request: QueryRequest):
 async def get_spending_summary(user_id: int = 1, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None):
     """获取消费汇总统计"""
     try:
-        summary = db_manager.get_spending_summary(user_id, start_date, end_date)
+        summary = get_spending_summary_simple(user_id)
         
         return {
             "success": True,
