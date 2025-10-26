@@ -14,6 +14,9 @@ class UnifiedDataGenerator:
     
     def __init__(self, db_path="data/bill_db.sqlite"):
         self.db_path = db_path
+        # 获取当前文件所在目录
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.parent_dir = os.path.dirname(self.base_dir)
         self.ensure_data_dir()
     
     def ensure_data_dir(self):
@@ -27,9 +30,22 @@ class UnifiedDataGenerator:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # 读取数据库架构
-        with open("data/database_schema.sql", "r", encoding="utf-8") as f:
-            schema_sql = f.read()
+        # 读取数据库架构 - 尝试多个可能的路径
+        schema_paths = [
+            os.path.join(self.base_dir, "database_schema.sql"),  # 在data目录下
+            os.path.join(self.parent_dir, "data", "database_schema.sql"),  # 在THE_TEAM目录下
+            "data/database_schema.sql"  # 相对路径（从当前工作目录）
+        ]
+        
+        schema_sql = None
+        for schema_path in schema_paths:
+            if os.path.exists(schema_path):
+                with open(schema_path, "r", encoding="utf-8") as f:
+                    schema_sql = f.read()
+                break
+        
+        if schema_sql is None:
+            raise FileNotFoundError(f"找不到database_schema.sql文件，尝试过的路径: {schema_paths}")
         
         # 执行SQL创建表
         cursor.executescript(schema_sql)
@@ -447,12 +463,15 @@ class UnifiedDataGenerator:
 - 导出目录: data/exports/
 """
         
-        # 保存报告
-        with open("data/exports/statistics_report.md", "w", encoding="utf-8") as f:
+        # 保存报告 - 使用绝对路径
+        export_dir = os.path.join(self.parent_dir, "data", "exports")
+        os.makedirs(export_dir, exist_ok=True)
+        report_path = os.path.join(export_dir, "statistics_report.md")
+        with open(report_path, "w", encoding="utf-8") as f:
             f.write(report)
+        print(f"统计报告已保存到: {report_path}")
         
         conn.close()
-        print("统计报告已生成: data/exports/statistics_report.md")
 
 def main():
     """主函数"""

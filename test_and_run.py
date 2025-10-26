@@ -5,6 +5,7 @@ import os
 import sys
 import sqlite3
 import subprocess
+import locale
 from datetime import datetime
 
 def check_dependencies():
@@ -142,8 +143,15 @@ def run_simple_demo():
     
     try:
         # 运行简化测试
+        # 注意：Windows系统使用GBK编码，需要指定正确的编码
+        import locale
+        system_encoding = locale.getpreferredencoding() or 'utf-8'
+        
         result = subprocess.run([sys.executable, "test_api_simple.py"], 
-                              capture_output=True, text=True, encoding='utf-8')
+                              capture_output=True, 
+                              text=True, 
+                              encoding=system_encoding,
+                              errors='replace')  # errors='replace' 确保即使编码错误也不会崩溃
         
         if result.returncode == 0:
             print("[OK] 简单演示运行成功")
