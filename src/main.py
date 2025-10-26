@@ -13,7 +13,8 @@ import os
 
 # 导入自定义模块
 from .database import db_manager
-from fix_sqlalchemy_session import get_bills_simple, get_bill_by_id, create_bill_simple, get_spending_summary_simple, init_database
+from fix_sqlalchemy_session import get_bills_simple, get_bill_by_id, create_bill_simple, get_spending_summary_simple
+from .database import init_database
 from .bill_query import query_processor
 from .cost_analysis import cost_analyzer
 from .ai_services import user_profiler, recommendation_engine, intelligent_analyzer
