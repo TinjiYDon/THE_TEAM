@@ -76,3 +76,74 @@ class UserProfile(Base):
     investment_preference = Column(JSON)  # 存储投资偏好JSON
     credit_score = Column(Integer)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+class UserBudget(Base):
+    """用户预算表"""
+    __tablename__ = "user_budgets"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False)
+    category = Column(String(50))
+    monthly_budget = Column(Float, nullable=False)
+    current_spent = Column(Float, default=0.0)
+    alert_threshold = Column(Float, default=0.8)  # 80%触发预警
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+class UserSubscription(Base):
+    """用户订阅表"""
+    __tablename__ = "user_subscriptions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False)
+    subscription_type = Column(String(50), default="free")  # free/premium
+    start_date = Column(DateTime, nullable=False)
+    end_date = Column(DateTime)
+    is_active = Column(Integer, default=1)  # 1=active, 0=expired
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+class OCRUsageQuota(Base):
+    """OCR使用配额表"""
+    __tablename__ = "ocr_usage_quota"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False)
+    used_at = Column(DateTime, nullable=False)
+    count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=func.now())
+
+class CommunityPost(Base):
+    """社区帖子表"""
+    __tablename__ = "community_posts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    bill_id = Column(Integer)  # 关联的账单ID
+    invoice_id = Column(Integer)  # 关联的发票ID
+    likes_count = Column(Integer, default=0)
+    comments_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+class PostComment(Base):
+    """帖子评论表"""
+    __tablename__ = "post_comments"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    post_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+class PostLike(Base):
+    """帖子点赞表"""
+    __tablename__ = "post_likes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    post_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=func.now())

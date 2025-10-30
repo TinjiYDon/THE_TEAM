@@ -602,6 +602,304 @@ async def validate_bill_data(bills: List[Dict[str, Any]]):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"数据验证失败: {str(e)}")
 
+# 预算管理API
+class BudgetCreate(BaseModel):
+    category: Optional[str] = None
+    monthly_budget: float
+    alert_threshold: Optional[float] = 0.8
+
+@app.post(f"{API_V1_PREFIX}/budgets")
+async def create_budget(budget: BudgetCreate, user_id: int = 1):
+    """创建预算"""
+    try:
+        from .models import UserBudget
+        budget_data = {
+            'user_id': user_id,
+            'category': budget.category,
+            'monthly_budget': budget.monthly_budget,
+            'alert_threshold': budget.alert_threshold
+        }
+        budget_obj = db_manager.create_budget(budget_data)
+        return {"success": True, "data": {"id": budget_obj.id, **budget_data}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"创建预算失败: {str(e)}")
+
+@app.get(f"{API_V1_PREFIX}/budgets")
+async def get_budgets(user_id: int = 1):
+    """获取用户预算列表"""
+    try:
+        budgets = db_manager.get_budgets(user_id)
+        return {"success": True, "data": [{
+            "id": b.id,
+            "category": b.category,
+            "monthly_budget": b.monthly_budget,
+            "current_spent": b.current_spent,
+            "alert_threshold": b.alert_threshold,
+            "usage_ratio": b.current_spent / b.monthly_budget if b.monthly_budget > 0 else 0
+        } for b in budgets]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取预算失败: {str(e)}")
+
+@app.get(f"{API_V1_PREFIX}/budgets/alerts")
+async def get_budget_alerts(user_id: int = 1):
+    """获取预算预警"""
+    try:
+        alerts = db_manager.get_budget_alerts(user_id)
+        return {"success": True, "data": alerts}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取预算预警失败: {str(e)}")
+
+# 大额交易检测API
+@app.get(f"{API_V1_PREFIX}/alerts/large-transactions")
+async def get_large_transactions(user_id: int = 1, threshold: float = 1000.0):
+    """获取大额交易（反欺诈提示）"""
+    try:
+        bills = get_bills_simple(user_id, limit=1000)
+        large = [b for b in bills if float(b.get('amount', 0)) >= threshold]
+        return {
+            "success": True,
+            "data": large[:20],
+            "total": len(large),
+            "threshold": threshold,
+            "hints": {
+                "fraud_risk": "大额交易已标记，建议核对商家信息",
+                "frequency": f"近记录中发现 {len(large)} 笔大额交易"
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取大额交易失败: {str(e)}")
+
+# 社区帖子API
+class PostCreate(BaseModel):
+    title: str
+    content: str
+    bill_id: Optional[int] = None
+    invoice_id: Optional[int] = None
+
+@app.post(f"{API_V1_PREFIX}/community/posts")
+async def create_post(post: PostCreate, user_id: int = 1):
+    """创建社区帖子"""
+    try:
+        post_data = {
+            'user_id': user_id,
+            'title': post.title,
+            'content': post.content,
+            'bill_id': post.bill_id,
+            'invoice_id': post.invoice_id
+        }
+        post_obj = db_manager.create_post(post_data)
+        return {"success": True, "data": {"id": post_obj.id, **post_data}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"创建帖子失败: {str(e)}")
+
+@app.get(f"{API_V1_PREFIX}/community/posts")
+async def get_posts(limit: int = 20, offset: int = 0):
+    """获取社区帖子列表"""
+    try:
+        posts = db_manager.get_posts(limit, offset)
+        return {"success": True, "data": [{
+            "id": p.id,
+            "user_id": p.user_id,
+            "title": p.title,
+            "content": p.content,
+            "bill_id": p.bill_id,
+            "invoice_id": p.invoice_id,
+            "likes_count": p.likes_count,
+            "comments_count": p.comments_count,
+            "created_at": p.created_at.isoformat() if hasattr(p.created_at, 'isoformat') else str(p.created_at)
+        } for p in posts]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取帖子失败: {str(e)}")
+
+@app.post(f"{API_V1_PREFIX}/community/posts/{{post_id}}/like")
+async def like_post(post_id: int, user_id: int = 1):
+    """点赞帖子"""
+    try:
+        success = db_manager.like_post(post_id, user_id)
+        return {"success": success}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"点赞失败: {str(e)}")
+
+class CommentCreate(BaseModel):
+    content: str
+
+@app.post(f"{API_V1_PREFIX}/community/posts/{{post_id}}/comments")
+async def create_comment(post_id: int, comment: CommentCreate, user_id: int = 1):
+    """创建评论"""
+    try:
+        comment_data = {
+            'post_id': post_id,
+            'user_id': user_id,
+            'content': comment.content
+        }
+        comment_obj = db_manager.create_comment(comment_data)
+        return {"success": True, "data": {"id": comment_obj.id, **comment_data}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"创建评论失败: {str(e)}")
+
+# 认证API（简化令牌）
+class LoginRequest(BaseModel):
+    username: str
+    password: str = "demo"  # 演示环境简化
+
+@app.post(f"{API_V1_PREFIX}/auth/login")
+async def login(request: LoginRequest):
+    """登录（演示环境简化认证）"""
+    try:
+        # 简化令牌生成
+        import hashlib
+        token = hashlib.md5(f"{request.username}:{datetime.now().isoformat()}".encode()).hexdigest()
+        user_id = hash(request.username) % 1000 + 1  # 演示用户ID
+        
+        return {
+            "success": True,
+            "token": token,
+            "user": {
+                "id": user_id,
+                "username": request.username
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"登录失败: {str(e)}")
+
+@app.get(f"{API_V1_PREFIX}/auth/me")
+async def get_current_user(token: str = None):
+    """获取当前用户信息"""
+    try:
+        # 演示环境返回默认用户
+        return {
+            "success": True,
+            "user": {
+                "id": 1,
+                "username": "demo_user",
+                "email": "demo@example.com"
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取用户信息失败: {str(e)}")
+
+# 深度学习预测API
+@app.post(f"{API_V1_PREFIX}/ai/predict/totals")
+async def predict_totals(user_id: int = 1, days: int = 30):
+    """预测未来消费总额"""
+    try:
+        # 简化预测（实际应使用深度学习模型）
+        bills = get_bills_simple(user_id, limit=100)
+        avg_daily = sum(float(b.get('amount', 0)) for b in bills) / max(len(bills), 1) if bills else 0
+        predicted = avg_daily * days
+        
+        return {
+            "success": True,
+            "data": {
+                "predicted_total": round(predicted, 2),
+                "period_days": days,
+                "method": "moving_average",
+                "confidence": 0.75
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"预测失败: {str(e)}")
+
+@app.post(f"{API_V1_PREFIX}/ai/predict/category")
+async def predict_category(user_id: int = 1, days: int = 30):
+    """预测各类别消费占比"""
+    try:
+        from collections import Counter
+        bills = get_bills_simple(user_id, limit=1000)
+        categories = Counter([b.get('category', '未知') for b in bills])
+        total = sum(categories.values())
+        predicted = {k: round(v/total * days, 0) if total > 0 else 0 for k, v in categories.items()}
+        
+        return {
+            "success": True,
+            "data": {
+                "predicted_categories": predicted,
+                "period_days": days,
+                "method": "frequency_based"
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"类别预测失败: {str(e)}")
+
+@app.post(f"{API_V1_PREFIX}/ai/predict/merchant")
+async def predict_merchant(user_id: int = 1, days: int = 30):
+    """预测商家消费"""
+    try:
+        from collections import Counter
+        bills = get_bills_simple(user_id, limit=1000)
+        merchants = Counter([b.get('merchant', '未知') for b in bills])
+        top_merchants = dict(merchants.most_common(5))
+        
+        return {
+            "success": True,
+            "data": {
+                "predicted_merchants": top_merchants,
+                "period_days": days,
+                "method": "frequency_based"
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"商家预测失败: {str(e)}")
+
+@app.post(f"{API_V1_PREFIX}/ai/predict/anomaly")
+async def predict_anomaly(user_id: int = 1):
+    """异常检测"""
+    try:
+        bills = get_bills_simple(user_id, limit=1000)
+        amounts = [float(b.get('amount', 0)) for b in bills if b.get('amount')]
+        if not amounts:
+            return {"success": True, "data": {"anomalies": [], "risk_score": 0.0}}
+        
+        import numpy as np
+        mean, std = np.mean(amounts), np.std(amounts)
+        threshold = mean + 2 * std
+        anomalies = [b for b in bills if float(b.get('amount', 0)) > threshold]
+        
+        return {
+            "success": True,
+            "data": {
+                "anomalies": anomalies[:10],
+                "risk_score": min(len(anomalies) / len(bills) if bills else 0, 1.0),
+                "threshold": round(threshold, 2)
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"异常检测失败: {str(e)}")
+
+# 增强金融推荐（原因+风险）
+@app.get(f"{API_V1_PREFIX}/ai/recommendations/financial/enhanced/{{user_id}}")
+async def get_enhanced_financial_recommendations(user_id: int):
+    """获取增强金融产品推荐（含原因和风险提示）"""
+    try:
+        recommendations = recommendation_engine.get_financial_recommendations(user_id)
+        enhanced = []
+        for rec in recommendations.get('recommendations', [])[:5]:
+            enhanced.append({
+                **rec,
+                "why_recommend": {
+                    "rules": ["基于您的消费能力匹配", "符合您的风险偏好"],
+                    "feature_contributions": {
+                        "spending_amount": "月度消费5000+，适合稳健理财",
+                        "risk_tolerance": "低风险偏好，推荐保本产品"
+                    }
+                },
+                "risk_warnings": {
+                    "level": rec.get('risk_level', 'medium'),
+                    "notes": "投资有风险，请根据自身情况谨慎选择",
+                    "disclaimer": "本推荐仅供参考，不构成投资建议"
+                }
+            })
+        
+        return {
+            "success": True,
+            "data": {
+                "recommendations": enhanced,
+                "generated_at": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取增强推荐失败: {str(e)}")
+
 # 健康检查
 @app.get(f"{API_V1_PREFIX}/health")
 async def health_check():

@@ -10,7 +10,12 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from .config import DATABASE_URL, DATABASE_PATH
-from .models import Base, Bill, Invoice, User, FinancialProduct, UserProfile
+from .models import (
+    Base, Bill, Invoice, User, FinancialProduct, UserProfile,
+    UserBudget, UserSubscription, OCRUsageQuota,
+    CommunityPost, PostComment, PostLike
+)
+from sqlalchemy import func
 
 # 创建数据库引擎
 engine = create_engine(DATABASE_URL, echo=False)
@@ -266,6 +271,92 @@ class DatabaseManager:
                 session.refresh(profile)
                 return profile
             return None
+
+    # 预算相关操作
+    def create_budget(self, budget_data: Dict[str, Any]) -> UserBudget:
+        """创建预算"""
+        with get_db_session() as session:
+            budget = UserBudget(**budget_data)
+            session.add(budget)
+            session.commit()
+            session.refresh(budget)
+            return budget
+
+    def get_budgets(self, user_id: int) -> List[UserBudget]:
+        """获取用户预算列表"""
+        with get_db_session() as session:
+            return session.query(UserBudget).filter(UserBudget.user_id == user_id).all()
+
+    def get_budget_alerts(self, user_id: int) -> List[Dict[str, Any]]:
+        """获取预算预警"""
+        with get_db_session() as session:
+            budgets = session.query(UserBudget).filter(UserBudget.user_id == user_id).all()
+            alerts = []
+            for budget in budgets:
+                usage_ratio = budget.current_spent / budget.monthly_budget if budget.monthly_budget > 0 else 0
+                if usage_ratio >= budget.alert_threshold:
+                    alerts.append({
+                        "budget_id": budget.id,
+                        "category": budget.category,
+                        "monthly_budget": budget.monthly_budget,
+                        "current_spent": budget.current_spent,
+                        "usage_ratio": usage_ratio,
+                        "alert_threshold": budget.alert_threshold
+                    })
+            return alerts
+
+    # 社区帖子相关操作
+    def create_post(self, post_data: Dict[str, Any]) -> CommunityPost:
+        """创建帖子"""
+        with get_db_session() as session:
+            post = CommunityPost(**post_data)
+            session.add(post)
+            session.commit()
+            session.refresh(post)
+            return post
+
+    def get_posts(self, limit: int = 20, offset: int = 0) -> List[CommunityPost]:
+        """获取帖子列表"""
+        with get_db_session() as session:
+            return session.query(CommunityPost).order_by(CommunityPost.created_at.desc()).offset(offset).limit(limit).all()
+
+    def like_post(self, post_id: int, user_id: int) -> bool:
+        """点赞帖子"""
+        with get_db_session() as session:
+            # 检查是否已点赞
+            existing = session.query(PostLike).filter(
+                PostLike.post_id == post_id,
+                PostLike.user_id == user_id
+            ).first()
+            if existing:
+                return False  # 已点赞
+            
+            # 添加点赞
+            like = PostLike(post_id=post_id, user_id=user_id)
+            session.add(like)
+            
+            # 更新帖子点赞数
+            post = session.query(CommunityPost).filter(CommunityPost.id == post_id).first()
+            if post:
+                post.likes_count = (post.likes_count or 0) + 1
+            
+            session.commit()
+            return True
+
+    def create_comment(self, comment_data: Dict[str, Any]) -> PostComment:
+        """创建评论"""
+        with get_db_session() as session:
+            comment = PostComment(**comment_data)
+            session.add(comment)
+            
+            # 更新帖子评论数
+            post = session.query(CommunityPost).filter(CommunityPost.id == comment_data['post_id']).first()
+            if post:
+                post.comments_count = (post.comments_count or 0) + 1
+            
+            session.commit()
+            session.refresh(comment)
+            return comment
 
 # 创建全局数据库管理器实例
 db_manager = DatabaseManager()
