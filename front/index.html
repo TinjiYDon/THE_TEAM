@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>微众记账 - 智能财务管理平台</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/index.min.js"></script>
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <div class="brand-icon">
+                    <i class="fas fa-university"></i>
+                </div>
+                <div class="brand-text">
+                    <span class="brand-name">微众记账</span>
+                    <span class="brand-subtitle">智能财务管理</span>
+                </div>
+            </div>
+            <div class="nav-menu">
+                <a href="#dashboard" class="nav-link active" data-section="dashboard">
+                    <i class="fas fa-tachometer-alt"></i>
+                    <span>仪表板</span>
+                </a>
+                <a href="#bills" class="nav-link" data-section="bills">
+                    <i class="fas fa-receipt"></i>
+                    <span>账单管理</span>
+                </a>
+                <a href="#analysis" class="nav-link" data-section="analysis">
+                    <i class="fas fa-chart-line"></i>
+                    <span>消费分析</span>
+                </a>
+                <a href="#ai-insights" class="nav-link" data-section="ai-insights">
+                    <i class="fas fa-brain"></i>
+                    <span>AI洞察</span>
+                </a>
+                
+            </div>
+            <div class="nav-user">
+                <div class="user-avatar">
+                    <i class="fas fa-user"></i>
+                </div>
+                <span class="user-name">用户</span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 主内容区域 -->
+    <main class="main-content">
+        <!-- 仪表板页面 -->
+        <section id="dashboard" class="page-section active">
+            <div class="page-header">
+                <h1>财务仪表板</h1>
+                <p>您的财务概览和关键指标</p>
+            </div>
+
+            <!-- 统计卡片 -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-dollar-sign"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="total-spending">¥0</h3>
+                        <p>本月总支出</p>
+                        <span class="stat-change positive" id="spending-change">+0%</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-shopping-cart"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="total-transactions">0</h3>
+                        <p>本月交易数</p>
+                        <span class="stat-change" id="transaction-change">+0%</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-tags"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="avg-transaction">¥0</h3>
+                        <p>平均交易金额</p>
+                        <span class="stat-change" id="avg-change">+0%</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-chart-pie"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="top-category">-</h3>
+                        <p>主要消费类别</p>
+                        <span class="stat-change" id="category-change">-</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 图表区域 -->
+            <div class="charts-grid">
+                <div class="chart-container trend">
+                    <div class="chart-header">
+                        <h3>消费趋势</h3>
+                        <div class="chart-controls">
+                            <select id="trend-period">
+                                <option value="7">近7天</option>
+                                <option value="30" selected>近1月</option>
+                                <option value="90">近3月</option>
+                                <option value="180">近6月</option>
+                                <option value="365">近1年</option>
+                                <option value="all">使用以来</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="chart-canvas">
+                        <canvas id="trendChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-container category">
+                    <div class="chart-header">
+                        <h3>消费分类</h3>
+                        <div class="chart-controls">
+                            <select id="category-period">
+                                <option value="7">近7天</option>
+                                <option value="30" selected>近1月</option>
+                                <option value="90">近3月</option>
+                                <option value="180">近6月</option>
+                                <option value="365">近1年</option>
+                                <option value="all">使用以来</option>
+                            </select>
+                        </div>
+                    </div>
+                    <canvas id="categoryChart"></canvas>
+                </div>
+            </div>
+
+            <!-- 最近交易 -->
+            <div class="recent-transactions">
+                <div class="section-header">
+                    <h3>最近交易</h3>
+                    <a href="#bills" class="view-all-btn">查看全部</a>
+                </div>
+                <div class="transactions-list" id="recent-transactions-list">
+                    <!-- 动态加载 -->
+                </div>
+            </div>
+        </section>
+
+        <!-- 账单管理页面 -->
+        <section id="bills" class="page-section">
+            <div class="page-header">
+                <h1>账单管理</h1>
+                <p>管理您的所有账单记录</p>
+            </div>
+
+            <!-- 操作栏 -->
+            <div class="action-bar">
+                <button class="btn btn-primary" id="add-bill-btn">
+                    <i class="fas fa-plus"></i>
+                    添加账单
+                </button>
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="bill-search" placeholder="搜索账单...">
+                </div>
+                <div class="filter-controls">
+                    <select id="category-filter">
+                        <option value="">所有类别</option>
+                        <option value="餐饮">餐饮</option>
+                        <option value="交通">交通</option>
+                        <option value="购物">购物</option>
+                        <option value="娱乐">娱乐</option>
+                        <option value="医疗">医疗</option>
+                        <option value="教育">教育</option>
+                    </select>
+                    <input type="date" id="date-filter">
+                </div>
+            </div>
+
+            <!-- 账单列表 -->
+            <div class="bills-table-container">
+                <table class="bills-table">
+                    <thead>
+                        <tr>
+                            <th>日期</th>
+                            <th>商家</th>
+                            <th>类别</th>
+                            <th>金额</th>
+                            <th>支付方式</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bills-table-body">
+                        <!-- 动态加载 -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 分页 -->
+            <div class="pagination">
+                <button class="btn btn-secondary" id="prev-page" disabled>
+                    <i class="fas fa-chevron-left"></i>
+                    上一页
+                </button>
+                <span class="page-info" id="page-info">第 1 页，共 1 页</span>
+                <button class="btn btn-secondary" id="next-page" disabled>
+                    下一页
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+            </div>
+        </section>
+
+        <!-- 消费分析页面 -->
+        <section id="analysis" class="page-section">
+            <div class="page-header">
+                <h1>消费分析</h1>
+                <p>深入了解您的消费模式和趋势</p>
+            </div>
+
+            <!-- 分析控制面板 -->
+            <div class="analysis-controls">
+                <div class="date-range-picker">
+                    <label>分析期间：</label>
+                    <input type="date" id="analysis-start-date">
+                    <span>至</span>
+                    <input type="date" id="analysis-end-date">
+                    <button class="btn btn-primary" id="analyze-btn">分析</button>
+                </div>
+                <div class="analysis-type">
+                    <label>分析类型：</label>
+                    <select id="analysis-type">
+                        <option value="comprehensive">综合分析</option>
+                        <option value="category">分类分析</option>
+                        <option value="trend">趋势分析</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- 分析结果 -->
+            <div class="analysis-results" id="analysis-results">
+                <!-- 动态加载分析结果 -->
+            </div>
+        </section>
+
+        <!-- AI洞察页面 -->
+        <section id="ai-insights" class="page-section">
+            <div class="page-header">
+                <h1>AI洞察</h1>
+                <p>基于AI的智能分析和建议</p>
+            </div>
+
+            <!-- AI查询 -->
+            <div class="ai-query-section">
+                <div class="query-box">
+                    <h3>智能查询</h3>
+                    <div class="query-input-group">
+                        <input type="text" id="ai-query-input" placeholder="例如：这个月餐饮花了多少钱？">
+                        <button class="btn btn-primary" id="ai-query-btn">
+                            <i class="fas fa-search"></i>
+                            查询
+                        </button>
+                    </div>
+                    <div class="query-suggestions">
+                        <span class="suggestion-tag" data-query="这个月花了多少钱">这个月花了多少钱</span>
+                        <span class="suggestion-tag" data-query="餐饮消费分析">餐饮消费分析</span>
+                        <span class="suggestion-tag" data-query="消费趋势">消费趋势</span>
+                        <span class="suggestion-tag" data-query="最贵的消费">最贵的消费</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI分析结果 -->
+            <div class="ai-results" id="ai-results">
+                <!-- 动态加载AI分析结果 -->
+            </div>
+
+            <!-- 用户画像 -->
+            <div class="user-profile-section">
+                <h3>用户画像</h3>
+                <div class="profile-cards" id="user-profile-cards">
+                    <!-- 动态加载用户画像 -->
+                </div>
+            </div>
+
+            <!-- 智能推荐 -->
+            <div class="recommendations-section">
+                <h3>智能推荐</h3>
+                <div class="recommendation-cards" id="recommendation-cards">
+                    <!-- 动态加载推荐内容 -->
+                </div>
+            </div>
+        </section>
+
+        
+    </main>
+
+    <!-- 添加账单模态框 -->
+    <div id="add-bill-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>添加账单</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <form id="add-bill-form" class="modal-body">
+                <div class="form-group">
+                    <label>发票图片（可选）</label>
+                    <div class="upload-row">
+                        <button type="button" id="invoice-upload-btn" class="btn btn-secondary">
+                            <i class="fas fa-upload"></i> 上传图片
+                        </button>
+                        <input type="file" id="invoice-file" accept="image/*,.pdf" style="display:none;">
+                        <div class="invoice-preview" id="invoice-preview" title="预览"></div>
+                    </div>
+                    <small class="hint">上传后将自动识别并填充表单，可手动修改。</small>
+                </div>
+                <div class="form-group">
+                    <label for="bill-date">消费日期</label>
+                    <input type="datetime-local" id="bill-date" required>
+                </div>
+                <div class="form-group">
+                    <label for="bill-merchant">商家名称</label>
+                    <input type="text" id="bill-merchant" required>
+                </div>
+                <div class="form-group">
+                    <label for="bill-category">消费类别</label>
+                    <select id="bill-category" required>
+                        <option value="餐饮">餐饮</option>
+                        <option value="交通">交通</option>
+                        <option value="购物">购物</option>
+                        <option value="娱乐">娱乐</option>
+                        <option value="医疗">医疗</option>
+                        <option value="教育">教育</option>
+                        <option value="其他">其他</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="bill-amount">金额</label>
+                    <input type="number" id="bill-amount" step="0.01" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="bill-payment">支付方式</label>
+                    <select id="bill-payment" required>
+                        <option value="现金">现金</option>
+                        <option value="银行卡">银行卡</option>
+                        <option value="支付宝">支付宝</option>
+                        <option value="微信支付">微信支付</option>
+                        <option value="信用卡">信用卡</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="bill-location">地点（可选）</label>
+                    <input type="text" id="bill-location">
+                </div>
+                <div class="form-group">
+                    <label for="bill-description">备注（可选）</label>
+                    <textarea id="bill-description" rows="3"></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary modal-cancel">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 编辑账单模态框 -->
+    <div id="edit-bill-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>编辑账单</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <form id="edit-bill-form" class="modal-body">
+                <input type="hidden" id="edit-bill-id">
+                <!-- 表单字段与添加账单相同 -->
+                <div class="form-group">
+                    <label for="edit-bill-date">消费日期</label>
+                    <input type="datetime-local" id="edit-bill-date" required>
+                </div>
+                <div class="form-group">
+                    <label for="edit-bill-merchant">商家名称</label>
+                    <input type="text" id="edit-bill-merchant" required>
+                </div>
+                <div class="form-group">
+                    <label for="edit-bill-category">消费类别</label>
+                    <select id="edit-bill-category" required>
+                        <option value="餐饮">餐饮</option>
+                        <option value="交通">交通</option>
+                        <option value="购物">购物</option>
+                        <option value="娱乐">娱乐</option>
+                        <option value="医疗">医疗</option>
+                        <option value="教育">教育</option>
+                        <option value="其他">其他</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="edit-bill-amount">金额</label>
+                    <input type="number" id="edit-bill-amount" step="0.01" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label for="edit-bill-payment">支付方式</label>
+                    <select id="edit-bill-payment" required>
+                        <option value="现金">现金</option>
+                        <option value="银行卡">银行卡</option>
+                        <option value="支付宝">支付宝</option>
+                        <option value="微信支付">微信支付</option>
+                        <option value="信用卡">信用卡</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="edit-bill-location">地点（可选）</label>
+                    <input type="text" id="edit-bill-location">
+                </div>
+                <div class="form-group">
+                    <label for="edit-bill-description">备注（可选）</label>
+                    <textarea id="edit-bill-description" rows="3"></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary modal-cancel">取消</button>
+                    <button type="submit" class="btn btn-primary">更新</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 加载指示器 -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-spinner">
+            <i class="fas fa-spinner fa-spin"></i>
+            <p>加载中...</p>
+        </div>
+    </div>
+
+    <!-- 通知容器 -->
+    <div id="notifications" class="notifications-container"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
