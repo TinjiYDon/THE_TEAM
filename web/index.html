@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>账单查询与管理系统 - 前端</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header>
+    <h1>账单查询与管理系统</h1>
+    <nav>
+      <a href="#upload">发票上传</a>
+      <a href="#bills">账单列表</a>
+      <a href="#analysis">消费分析</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="upload" class="card">
+      <h2>发票上传（OCR）</h2>
+      <form id="uploadForm">
+        <input type="file" id="invoiceFile" accept="image/*,.pdf" required />
+        <input type="number" id="userIdUpload" value="1" min="1" />
+        <button type="submit">上传并识别</button>
+      </form>
+      <pre id="uploadResult" class="mono"></pre>
+    </section>
+
+    <section id="bills" class="card">
+      <div class="row">
+        <h2>账单列表</h2>
+        <div class="right">
+          <label>用户ID <input type="number" id="userIdBills" value="1" min="1" /></label>
+          <button id="refreshBills">刷新</button>
+        </div>
+      </div>
+      <table id="billsTable">
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>商家</th>
+            <th>类别</th>
+            <th class="num">金额</th>
+            <th>支付方式</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="analysis" class="card">
+      <div class="row">
+        <h2>消费汇总</h2>
+        <div class="right">
+          <label>用户ID <input type="number" id="userIdSummary" value="1" min="1" /></label>
+          <button id="refreshSummary">刷新</button>
+        </div>
+      </div>
+      <div id="summary"></div>
+    </section>
+  </main>
+
+  <footer>
+    <small>前端示例 | 若后端同仓库部署，访问路径 /app</small>
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>
+
+

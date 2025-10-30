@@ -21,6 +21,7 @@ from .ai_services import user_profiler, recommendation_engine, intelligent_analy
 from .invoice_ocr import invoice_ocr_processor
 from .data_cleaning import data_cleaner
 from .config import HOST, PORT, API_V1_PREFIX
+import sqlite3
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -79,6 +80,23 @@ async def startup_event():
     """应用启动时初始化数据库"""
     init_database()
     print("数据库初始化完成")
+    # 确保 OCR 日用量表存在
+    try:
+        conn = sqlite3.connect(str((__import__('pathlib').Path(__file__).parent.parent / 'data' / 'bill_db.sqlite')))
+        cur = conn.cursor()
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS ocr_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            used_at DATE NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(user_id, used_at)
+        )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as _:
+        pass
 
 # 根路径
 @app.get("/", response_class=HTMLResponse)
@@ -402,6 +420,157 @@ async def get_invoice_statistics(user_id: int = 1):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取发票统计失败: {str(e)}")
+
+# 前端与OCR整合：发票图片上传并OCR
+@app.post(f"{API_V1_PREFIX}/invoices/upload")
+async def upload_invoice_image(file: UploadFile = File(...), user_id: int = 1):
+    """上传发票图片并进行OCR，返回入库结果"""
+    try:
+        # 非订阅用户每日10次限额（演示）
+        try:
+            today = datetime.now().strftime('%Y-%m-%d')
+            db_path = str((__import__('pathlib').Path(__file__).parent.parent / 'data' / 'bill_db.sqlite'))
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("SELECT count FROM ocr_usage WHERE user_id=? AND used_at=?", (user_id, today))
+            row = cur.fetchone()
+            current = row[0] if row else 0
+            if current >= 10:
+                conn.close()
+                raise HTTPException(status_code=429, detail="OCR当日次数已达上限(10)。请订阅提升配额或次日再试。")
+            if row:
+                cur.execute("UPDATE ocr_usage SET count=count+1 WHERE user_id=? AND used_at=?", (user_id, today))
+            else:
+                cur.execute("INSERT INTO ocr_usage(user_id, used_at, count) VALUES(?,?,1)", (user_id, today))
+            conn.commit()
+            conn.close()
+        except HTTPException:
+            raise
+        except Exception as _:
+            pass
+        # 保存上传文件
+        from .config import UPLOADS_DIR
+        os.makedirs(UPLOADS_DIR, exist_ok=True)
+        save_path = os.path.join(str(UPLOADS_DIR), file.filename)
+        with open(save_path, "wb") as f:
+            f.write(await file.read())
+
+        # 这里可接入真实OCR；当前以文件名作为占位OCR文本
+        ocr_text = f"发票图片: {file.filename}"
+        result = invoice_ocr_processor.create_invoice_record(
+            ocr_text=ocr_text,
+            file_path=save_path,
+            user_id=user_id,
+        )
+
+        return {
+            "success": result.get("success", False),
+            "data": result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"上传并处理发票失败: {str(e)}")
+
+# 可选：挂载前端静态资源（若存在web目录）
+try:
+    web_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web")
+    if os.path.isdir(web_dir):
+        app.mount("/app", StaticFiles(directory=web_dir, html=True), name="app")
+except Exception:
+    pass
+
+# 商家评估Top榜（频率/复购/间隔）
+@app.get(f"{API_V1_PREFIX}/merchants/top")
+async def get_top_merchants(user_id: int = 1, window: int = 90, top_k: int = 10):
+    """近window天用户商家评估Top榜"""
+    try:
+        # 取近window天账单
+        from datetime import timedelta
+        end_dt = datetime.now()
+        start_dt = end_dt - timedelta(days=window)
+        bills = get_bills_simple(user_id=user_id, limit=10000, offset=0)
+        bills = [b for b in bills if b.get('consume_time') and str(b['consume_time']) >= start_dt.strftime('%Y-%m-%d')]
+
+        # 聚合
+        by_merchant = {}
+        for b in bills:
+            m = b.get('merchant') or '未知'
+            by_merchant.setdefault(m, []).append(b)
+
+        results = []
+        for m, arr in by_merchant.items():
+            arr_sorted = sorted(arr, key=lambda x: str(x.get('consume_time')))
+            visits = len(arr_sorted)
+            total_amount = sum(float(x.get('amount') or 0) for x in arr_sorted)
+            repurchase = 1.0 if visits >= 2 else 0.0  # 单用户退化定义
+            # 平均间隔天数
+            intervals = []
+            for i in range(1, len(arr_sorted)):
+                try:
+                    t1 = datetime.fromisoformat(str(arr_sorted[i]['consume_time']).replace(' ', 'T'))
+                    t0 = datetime.fromisoformat(str(arr_sorted[i-1]['consume_time']).replace(' ', 'T'))
+                    intervals.append((t1 - t0).days or 0)
+                except Exception:
+                    pass
+            avg_interval = sum(intervals)/len(intervals) if intervals else None
+            # 简易评分：访问频次+复购+金额占比权重
+            score = visits*0.5 + repurchase*1.5 + (total_amount/ (1+total_amount))
+            results.append({
+                'merchant': m,
+                'visits': visits,
+                'total_amount': round(total_amount,2),
+                'repurchase_rate': repurchase,
+                'avg_interval_days': avg_interval,
+                'score': round(score,3)
+            })
+
+        results = sorted(results, key=lambda x: x['score'], reverse=True)[:top_k]
+        return { 'success': True, 'data': results }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取商家Top失败: {str(e)}")
+
+# AI助手意图增强
+@app.post(f"{API_V1_PREFIX}/ai/advice/{{user_id}}")
+async def ai_advice(user_id: int, body: Dict[str, Any]):
+    """对话式AI助手：今日/趋势/好商家/预警"""
+    try:
+        q = (body.get('query') or '').strip()
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        # 今日
+        if any(k in q for k in ['今日','今天','today']):
+            bills = get_bills_simple(user_id=user_id, limit=1000)
+            tb = [b for b in bills if str(b.get('consume_time','')).startswith(today_str)]
+            total = sum(float(x.get('amount') or 0) for x in tb)
+            topm = None
+            if tb:
+                from collections import Counter
+                topm = Counter([x.get('merchant') for x in tb]).most_common(1)[0][0]
+            return { 'cards': [
+                { 'type':'summary', 'title':'今日消费', 'content': f"{len(tb)} 笔，共 {total:.2f} 元" },
+                { 'type':'tip', 'title':'提示', 'content': f"今日最常去：{topm or '—'}" }
+            ]}
+        # 趋势
+        if any(k in q for k in ['趋势','trend','近7','近30']):
+            s = get_spending_summary_simple(user_id)
+            return { 'cards': [
+                { 'type':'summary', 'title':'趋势概览', 'content': f"总金额 {float(s.get('total_amount',0)):.2f} 元，单笔均值 {float(s.get('avg_amount',0)):.2f} 元"},
+            ]}
+        # 好商家
+        if any(k in q for k in ['好商家','推荐商家','回购']):
+            r = await get_top_merchants(user_id=user_id, window=90, top_k=5)
+            return { 'cards': [
+                { 'type':'recommendation', 'title':'好商家推荐', 'items': r.get('data',[]) }
+            ]}
+        # 预警（预算/大额）
+        if any(k in q for k in ['预警','超额','大额']):
+            bills = get_bills_simple(user_id=user_id, limit=1000)
+            large = [b for b in bills if float(b.get('amount') or 0) >= 1000]
+            return { 'cards': [
+                { 'type':'alert', 'title':'大额支出提示', 'content': f"近记录中大额(≥1000) {len(large)} 笔"}
+            ]}
+        # 默认
+        return { 'cards': [ { 'type':'tip', 'title':'试试这些', 'content':'“今日消费分析 / 消费趋势分析 / 好商家推荐 / 消费预警”' } ] }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"生成建议失败: {str(e)}")
 
 # 数据清洗API
 @app.post(f"{API_V1_PREFIX}/data/clean")

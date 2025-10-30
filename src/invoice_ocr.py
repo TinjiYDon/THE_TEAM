@@ -140,11 +140,15 @@ class InvoiceOCRProcessor:
         }
     
     def _extract_invoice_info(self, ocr_text: str) -> Dict[str, Any]:
-        """从OCR文本中提取发票信息"""
+        """从OCR文本中提取发票信息（增强规则）"""
         info = {
             'merchant': '未知商家',
             'amount': 0.0,
             'invoice_time': datetime.now(),
+            'invoice_no': None,              # 发票号码/代码
+            'tax_id': None,                  # 纳税人识别号/统一社会信用代码
+            'buyer': None,                   # 购方
+            'seller': None,                  # 销方
             'description': ocr_text
         }
         
@@ -158,21 +162,20 @@ class InvoiceOCRProcessor:
             r'¥\s*(\d+\.?\d*)'
         ]
         
+        # 抓取所有可能金额，取最大值作为合计（更鲁棒）
+        amounts_found = []
         for pattern in amount_patterns:
-            match = re.search(pattern, ocr_text)
-            if match:
+            for m in re.finditer(pattern, ocr_text):
                 try:
-                    info['amount'] = float(match.group(1))
-                    break
-                except ValueError:
-                    continue
+                    amounts_found.append(float(m.group(1)))
+                except Exception:
+                    pass
+        if amounts_found:
+            info['amount'] = max(amounts_found)
         
         # 提取商家名称
         merchant_patterns = [
-            r'商户[：:]\s*([^\n\r]+)',
-            r'商家[：:]\s*([^\n\r]+)',
-            r'店铺[：:]\s*([^\n\r]+)',
-            r'单位[：:]\s*([^\n\r]+)'
+            r'(?:商户|商家|销售方|销方|购买方|购方|店铺|单位)[：:]\s*([^\n\r]+)'
         ]
         
         for pattern in merchant_patterns:
@@ -194,10 +197,9 @@ class InvoiceOCRProcessor:
         
         # 提取时间
         time_patterns = [
-            r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})',
-            r'(\d{4}年\d{1,2}月\d{1,2}日)',
-            r'时间[：:]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})',
-            r'日期[：:]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2})'
+            r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)',
+            r'(\d{4}年\d{1,2}月\d{1,2}日(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)',
+            r'(?:时间|开票日期|日期)[：:]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)'
         ]
         
         for pattern in time_patterns:
@@ -208,11 +210,51 @@ class InvoiceOCRProcessor:
                     # 处理不同的时间格式
                     if '年' in time_str and '月' in time_str and '日' in time_str:
                         time_str = time_str.replace('年', '-').replace('月', '-').replace('日', '')
-                    
-                    info['invoice_time'] = datetime.strptime(time_str, '%Y-%m-%d')
+                    # 适配含时间或不含时间
+                    fmt = '%Y-%m-%d %H:%M:%S'
+                    if re.match(r'^\d{4}-\d{1,2}-\d{1,2}$', time_str):
+                        fmt = '%Y-%m-%d'
+                    elif re.match(r'^\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}$', time_str):
+                        fmt = '%Y-%m-%d %H:%M'
+                    info['invoice_time'] = datetime.strptime(time_str, fmt)
                     break
                 except ValueError:
                     continue
+
+        # 提取发票号码/代码
+        invoice_no_patterns = [
+            r'(?:发票号码|发票代码|机打号码|号码)[：:]\s*([A-Za-z0-9\-]+)',
+            r'(?:No\.?|NO\.?|编号)[：:]?\s*([A-Za-z0-9\-]+)'
+        ]
+        for pattern in invoice_no_patterns:
+            m = re.search(pattern, ocr_text)
+            if m:
+                info['invoice_no'] = m.group(1).strip()
+                break
+
+        # 提取纳税人识别号/统一社会信用代码
+        tax_id_patterns = [
+            r'(?:纳税人识别号|统一社会信用代码|税号)[：:]\s*([A-Za-z0-9]{8,20})'
+        ]
+        for pattern in tax_id_patterns:
+            m = re.search(pattern, ocr_text)
+            if m:
+                info['tax_id'] = m.group(1).strip()
+                break
+
+        # 提取购方/销方
+        buyer_patterns = [r'(?:购方|购买方|买方)[：:]\s*([^\n\r]+)']
+        seller_patterns = [r'(?:销方|销售方|卖方)[：:]\s*([^\n\r]+)']
+        for pattern in buyer_patterns:
+            m = re.search(pattern, ocr_text)
+            if m:
+                info['buyer'] = m.group(1).strip()
+                break
+        for pattern in seller_patterns:
+            m = re.search(pattern, ocr_text)
+            if m:
+                info['seller'] = m.group(1).strip()
+                break
         
         return info
     
@@ -308,13 +350,31 @@ class InvoiceOCRProcessor:
         # 保存到数据库
         try:
             invoice = db_manager.create_invoice(invoice_data)
+
+            # 同步生成对应账单记录
+            try:
+                bill_data = {
+                    'user_id': user_id,
+                    'consume_time': invoice_data['invoice_time'],
+                    'amount': invoice_data['amount'],
+                    'merchant': invoice_data['merchant'],
+                    'category': invoice_type or '其他',
+                    'payment_method': '发票',
+                    'location': None,
+                    'description': f"由发票#{invoice.id}自动生成"
+                }
+                db_manager.create_bill(bill_data)
+            except Exception as _:
+                # 账单失败不影响发票入库
+                pass
+
             return {
                 'success': True,
                 'invoice_id': invoice.id,
                 'extracted_info': extracted_info,
                 'classification': invoice_type,
                 'confidence': confidence,
-                'message': '发票记录创建成功'
+                'message': '发票记录创建成功，已生成对应账单'
             }
         except Exception as e:
             return {
