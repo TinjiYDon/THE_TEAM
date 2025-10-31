@@ -7,6 +7,7 @@ import Analysis from './pages/Analysis'
 import AIAssistant from './pages/AIAssistant'
 import Recommendations from './pages/Recommendations'
 import Community from './pages/Community'
+import Health from './pages/Health'
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
           <Route path="ai-assistant" element={<AIAssistant />} />
           <Route path="recommendations" element={<Recommendations />} />
           <Route path="community" element={<Community />} />
+          <Route path="health" element={<Health />} />
         </Route>
       </Routes>
     </BrowserRouter>

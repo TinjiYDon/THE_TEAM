@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Row, Col, Tag, Alert, Spin, Empty } from 'antd'
+import { Card, Row, Col, Tag, Alert, Spin, Empty, Space } from 'antd'
 import { GiftOutlined, CheckCircleOutlined, WarningOutlined } from '@ant-design/icons'
 import api from '../utils/api'
 
@@ -15,7 +15,9 @@ function Recommendations() {
     setLoading(true)
     try {
       const res = await api.get('/ai/recommendations/financial/enhanced/1')
-      setRecommendations(res.data.recommendations || [])
+      // API 返回格式: { success: true, data: { recommendations: [...] } }
+      const recommendations = res.success && res.data ? (res.data.recommendations || []) : []
+      setRecommendations(recommendations)
     } catch (error) {
       console.error('加载推荐失败:', error)
       // 模拟数据

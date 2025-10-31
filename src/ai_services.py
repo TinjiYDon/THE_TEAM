@@ -26,20 +26,28 @@ class UserProfiler:
     
     def generate_user_profile(self, user_id: int) -> Dict[str, Any]:
         """生成用户画像"""
-        # 获取用户消费数据
-        bills = db_manager.get_bills(user_id, limit=1000)
-        
-        if not bills:
+        # 获取用户消费数据（使用直接SQL查询避免会话问题）
+        try:
+            import sqlite3
+            from .config import DATABASE_PATH
+            from fix_sqlalchemy_session import get_bills_simple
+            
+            bills_data = get_bills_simple(user_id, limit=1000)
+            
+            if not bills_data:
+                return self._get_default_profile(user_id)
+        except Exception as e:
+            print(f"获取账单数据失败，使用默认画像: {e}")
             return self._get_default_profile(user_id)
         
         # 转换为DataFrame
         df = pd.DataFrame([{
-            'consume_time': bill.consume_time,
-            'amount': bill.amount,
-            'merchant': bill.merchant,
-            'category': bill.category,
-            'payment_method': bill.payment_method
-        } for bill in bills])
+            'consume_time': bill.get('consume_time', ''),
+            'amount': bill.get('amount', 0),
+            'merchant': bill.get('merchant', ''),
+            'category': bill.get('category', '未知'),
+            'payment_method': bill.get('payment_method', '')
+        } for bill in bills_data])
         
         # 生成各种画像特征
         profile = {
@@ -337,29 +345,53 @@ class RecommendationEngine:
         profiler = UserProfiler()
         profile = profiler.generate_user_profile(user_id)
         
-        # 获取金融产品
-        products = db_manager.get_financial_products()
-        
-        if not products:
+        # 获取金融产品（使用直接SQL查询避免会话问题）
+        try:
+            import sqlite3
+            from .config import DATABASE_PATH
+            
+            conn = sqlite3.connect(str(DATABASE_PATH))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM financial_products LIMIT 100")
+            products_rows = cursor.fetchall()
+            conn.close()
+            
+            if not products_rows:
+                return []
+            
+            recommendations = []
+            
+            for product_row in products_rows:
+                # 构造产品对象（字典形式）
+                product = {
+                    'id': product_row['id'],
+                    'product_name': product_row['product_name'],
+                    'product_type': product_row['product_type'],
+                    'interest_rate': product_row['interest_rate'],
+                    'min_amount': product_row['min_amount'],
+                    'max_amount': product_row['max_amount'],
+                    'risk_level': product_row['risk_level'],
+                    'description': product_row.get('description', '')
+                }
+                
+                score = self._calculate_recommendation_score(profile, product)
+                if score > 0.3:  # 只推荐评分较高的产品
+                    recommendations.append({
+                        'product_id': product['id'],
+                        'product_name': product['product_name'],
+                        'product_type': product['product_type'],
+                        'interest_rate': product['interest_rate'],
+                        'min_amount': product['min_amount'],
+                        'max_amount': product['max_amount'],
+                        'risk_level': product['risk_level'],
+                        'description': product['description'],
+                        'recommendation_score': score,
+                        'reason': self._get_recommendation_reason(profile, product)
+                    })
+        except Exception as e:
+            print(f"获取金融产品失败: {e}")
             return []
-        
-        recommendations = []
-        
-        for product in products:
-            score = self._calculate_recommendation_score(profile, product)
-            if score > 0.3:  # 只推荐评分较高的产品
-                recommendations.append({
-                    'product_id': product.id,
-                    'product_name': product.product_name,
-                    'product_type': product.product_type,
-                    'interest_rate': product.interest_rate,
-                    'min_amount': product.min_amount,
-                    'max_amount': product.max_amount,
-                    'risk_level': product.risk_level,
-                    'description': product.description,
-                    'recommendation_score': score,
-                    'reason': self._get_recommendation_reason(profile, product)
-                })
         
         # 按推荐评分排序
         recommendations.sort(key=lambda x: x['recommendation_score'], reverse=True)
@@ -370,31 +402,39 @@ class RecommendationEngine:
         """计算推荐评分"""
         score = 0.0
         
+        # 处理product可能是字典或对象
+        if isinstance(product, dict):
+            risk_level = product.get('risk_level', 'medium')
+            min_amount = product.get('min_amount', 0)
+            product_type = product.get('product_type', '')
+        else:
+            risk_level = product.risk_level
+            min_amount = product.min_amount if hasattr(product, 'min_amount') else 0
+            product_type = product.product_type if hasattr(product, 'product_type') else ''
+        
         # 基于用户风险偏好
-        risk_tolerance = profile['risk_profile']['tolerance']
-        if risk_tolerance == 'aggressive' and product.risk_level in ['high', 'medium']:
+        risk_tolerance = profile.get('risk_profile', {}).get('tolerance', 'moderate')
+        if risk_tolerance == 'aggressive' and risk_level in ['R4', 'R5', 'R3']:
             score += 0.3
-        elif risk_tolerance == 'moderate' and product.risk_level in ['medium', 'low']:
+        elif risk_tolerance == 'moderate' and risk_level in ['R2', 'R3']:
             score += 0.3
-        elif risk_tolerance == 'conservative' and product.risk_level == 'low':
+        elif risk_tolerance == 'conservative' and risk_level in ['R1', 'R2']:
             score += 0.3
         
         # 基于用户消费水平
-        spending_level = profile['spending_pattern']['level']
-        if spending_level == 'high' and product.min_amount and product.min_amount <= 10000:
+        spending_level = profile.get('spending_pattern', {}).get('level', 'medium')
+        if spending_level == 'high' and min_amount <= 10000:
             score += 0.2
-        elif spending_level == 'medium' and product.min_amount and product.min_amount <= 5000:
+        elif spending_level == 'medium' and min_amount <= 5000:
             score += 0.2
-        elif spending_level == 'low' and product.min_amount and product.min_amount <= 1000:
+        elif spending_level == 'low' and min_amount <= 1000:
             score += 0.2
         
         # 基于产品类型偏好
-        if product.product_type == '理财' and 'savings_focused' in profile['recommendation_tags']:
-            score += 0.2
-        elif product.product_type == '贷款' and 'high_spender' in profile['recommendation_tags']:
-            score += 0.2
-        elif product.product_type == '保险' and 'conservative' in profile['risk_profile']['tolerance']:
-            score += 0.2
+        tags = profile.get('recommendation_tags', [])
+        if '理财' in product_type or '基金' in product_type:
+            if 'savings_focused' in tags or 'low_spender' in tags:
+                score += 0.2
         
         return min(score, 1.0)
     
@@ -402,44 +442,59 @@ class RecommendationEngine:
         """获取推荐理由"""
         reasons = []
         
+        # 处理product可能是字典或对象
+        if isinstance(product, dict):
+            risk_level = product.get('risk_level', 'medium')
+            min_amount = product.get('min_amount', 0)
+            product_type = product.get('product_type', '')
+        else:
+            risk_level = product.risk_level if hasattr(product, 'risk_level') else 'medium'
+            min_amount = product.min_amount if hasattr(product, 'min_amount') else 0
+            product_type = product.product_type if hasattr(product, 'product_type') else ''
+        
         # 风险匹配
-        risk_tolerance = profile['risk_profile']['tolerance']
-        if risk_tolerance == 'conservative' and product.risk_level == 'low':
+        risk_tolerance = profile.get('risk_profile', {}).get('tolerance', 'moderate')
+        if risk_tolerance == 'conservative' and risk_level in ['R1', 'R2']:
             reasons.append("符合您的保守投资偏好")
-        elif risk_tolerance == 'aggressive' and product.risk_level == 'high':
+        elif risk_tolerance == 'aggressive' and risk_level in ['R4', 'R5']:
             reasons.append("匹配您的高风险承受能力")
         
         # 金额匹配
-        spending_level = profile['spending_pattern']['level']
-        if spending_level == 'high' and product.min_amount and product.min_amount <= 10000:
+        spending_level = profile.get('spending_pattern', {}).get('level', 'medium')
+        if spending_level == 'high' and min_amount <= 10000:
             reasons.append("适合您的高消费水平")
-        elif spending_level == 'low' and product.min_amount and product.min_amount <= 1000:
+        elif spending_level == 'low' and min_amount <= 1000:
             reasons.append("适合您的消费预算")
         
         # 类型匹配
-        if product.product_type == '理财':
+        if '理财' in product_type or '基金' in product_type:
             reasons.append("帮助您实现财富增值")
-        elif product.product_type == '贷款':
+        elif '贷款' in product_type:
             reasons.append("满足您的资金需求")
-        elif product.product_type == '保险':
+        elif '保险' in product_type:
             reasons.append("提供风险保障")
         
         return "；".join(reasons) if reasons else "基于您的消费习惯推荐"
     
     def get_spending_recommendations(self, user_id: int) -> List[Dict[str, Any]]:
         """获取消费建议"""
-        # 获取用户消费数据
-        bills = db_manager.get_bills(user_id, limit=1000)
-        
-        if not bills:
+        # 获取用户消费数据（使用直接SQL查询避免会话问题）
+        try:
+            from fix_sqlalchemy_session import get_bills_simple
+            bills_data = get_bills_simple(user_id, limit=1000)
+            
+            if not bills_data:
+                return []
+            
+            df = pd.DataFrame([{
+                'consume_time': bill.get('consume_time', ''),
+                'amount': bill.get('amount', 0),
+                'category': bill.get('category', '未知'),
+                'merchant': bill.get('merchant', '')
+            } for bill in bills_data])
+        except Exception as e:
+            print(f"获取消费建议失败: {e}")
             return []
-        
-        df = pd.DataFrame([{
-            'consume_time': bill.consume_time,
-            'amount': bill.amount,
-            'category': bill.category,
-            'merchant': bill.merchant
-        } for bill in bills])
         
         recommendations = []
         

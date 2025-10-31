@@ -5,11 +5,23 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
+    host: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
-        changeOrigin: true
+        changeOrigin: true,
+        secure: false,
+        ws: true
       }
+    }
+  },
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'antd', '@ant-design/icons']
+  },
+  build: {
+    commonjsOptions: {
+      include: [/node_modules/],
+      transformMixedEsModules: true
     }
   }
 })

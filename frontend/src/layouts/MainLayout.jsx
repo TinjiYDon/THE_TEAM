@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { Layout, Menu, Avatar, Dropdown, Space } from 'antd'
+import React, { useState, useEffect } from 'react'
+import { Layout, Menu, Avatar, Dropdown, Space, Modal, Form, Input, Button } from 'antd'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   DashboardOutlined,
@@ -8,9 +8,12 @@ import {
   RobotOutlined,
   GiftOutlined,
   TeamOutlined,
+  HeartOutlined,
   UserOutlined,
-  LogoutOutlined
+  LogoutOutlined,
+  LoginOutlined
 } from '@ant-design/icons'
+import api from '../utils/api'
 
 const { Header, Sider, Content } = Layout
 
@@ -21,27 +24,60 @@ const menuItems = [
   { key: '/ai-assistant', icon: <RobotOutlined />, label: 'AI助手' },
   { key: '/recommendations', icon: <GiftOutlined />, label: '金融产品推荐' },
   { key: '/community', icon: <TeamOutlined />, label: '社区' },
+  { key: '/health', icon: <HeartOutlined />, label: '健康消费' },
 ]
 
-const userMenuItems = [
-  { key: 'profile', icon: <UserOutlined />, label: '个人信息' },
-  { type: 'divider' },
-  { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
-]
 
 function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
+  const [user, setUser] = useState(null)
+  const [loginVisible, setLoginVisible] = useState(false)
+  const [form] = Form.useForm()
   const navigate = useNavigate()
   const location = useLocation()
+
+  useEffect(() => {
+    // 尝试获取当前用户信息
+    loadCurrentUser()
+  }, [])
+
+  const loadCurrentUser = async () => {
+    try {
+      const res = await api.get('/auth/me')
+      if (res.success) {
+        setUser(res.user)
+      }
+    } catch (error) {
+      // 未登录或获取失败，显示登录按钮
+      setUser(null)
+    }
+  }
 
   const handleMenuClick = ({ key }) => {
     navigate(key)
   }
 
   const handleUserMenuClick = ({ key }) => {
-    if (key === 'logout') {
-      // 处理退出登录
-      console.log('退出登录')
+    if (key === 'login') {
+      setLoginVisible(true)
+    } else if (key === 'logout') {
+      setUser(null)
+      setLoginVisible(true)
+    } else if (key === 'profile') {
+      // 显示个人信息
+    }
+  }
+
+  const handleLogin = async (values) => {
+    try {
+      const res = await api.post('/auth/login', values)
+      if (res.success) {
+        setUser(res.user)
+        setLoginVisible(false)
+        form.resetFields()
+      }
+    } catch (error) {
+      console.error('登录失败:', error)
     }
   }
 
@@ -92,12 +128,64 @@ function MainLayout() {
           <div style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>
             智能账单管理系统
           </div>
-          <Dropdown menu={{ items: userMenuItems, onClick: handleUserMenuClick }}>
-            <Space style={{ cursor: 'pointer' }}>
-              <Avatar icon={<UserOutlined />} />
-              <span>用户</span>
-            </Space>
-          </Dropdown>
+          {user ? (
+            <Dropdown menu={{
+              items: [
+                { key: 'profile', icon: <UserOutlined />, label: '个人信息' },
+                { type: 'divider' },
+                { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
+              ],
+              onClick: handleUserMenuClick
+            }}>
+              <Space style={{ cursor: 'pointer' }}>
+                <Avatar icon={<UserOutlined />} />
+                <span>{user.username}</span>
+              </Space>
+            </Dropdown>
+          ) : (
+            <Button type="primary" icon={<LoginOutlined />} onClick={() => setLoginVisible(true)}>
+              登录
+            </Button>
+          )}
+
+          <Modal
+            title="用户登录"
+            open={loginVisible}
+            onCancel={() => {
+              setLoginVisible(false)
+              form.resetFields()
+            }}
+            footer={null}
+          >
+            <Form
+              form={form}
+              onFinish={handleLogin}
+              layout="vertical"
+            >
+              <Form.Item
+                name="username"
+                label="用户名"
+                rules={[{ required: true, message: '请输入用户名' }]}
+              >
+                <Input placeholder="输入用户名 (user1/user2/user3)" />
+              </Form.Item>
+              <Form.Item
+                name="password"
+                label="密码"
+                rules={[{ required: true, message: '请输入密码' }]}
+              >
+                <Input.Password placeholder="输入密码 (demo123)" />
+              </Form.Item>
+              <Form.Item>
+                <Button type="primary" htmlType="submit" block>
+                  登录
+                </Button>
+              </Form.Item>
+              <div style={{ fontSize: 12, color: '#999', textAlign: 'center' }}>
+                演示账号：user1/user2/user3，密码：demo123
+              </div>
+            </Form>
+          </Modal>
         </Header>
         <Content style={{ 
           margin: '24px', 

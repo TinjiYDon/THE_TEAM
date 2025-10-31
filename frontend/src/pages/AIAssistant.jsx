@@ -39,9 +39,38 @@ function AIAssistant() {
 
     try {
       const res = await api.post('/ai/advice/1', { query: inputValue })
+      
+      // 优先使用人性化回复
+      let content = res.humanized || '抱歉，我暂时无法理解您的问题。请试试问我："今日消费分析"、"消费趋势分析"等。'
+      
+      // 如果有cards，补充详细信息
+      if (res.cards && res.cards.length > 0) {
+        const cardsContent = res.cards.map(card => {
+          if (card.type === 'summary') {
+            return `📊 ${card.title}\n${card.content}`
+          } else if (card.type === 'tip') {
+            return `💡 ${card.title}\n${card.content}`
+          } else if (card.type === 'recommendation') {
+            if (card.items && card.items.length > 0) {
+              const itemsText = card.items.map((item, idx) => 
+                `${idx + 1}. ${item.merchant || item.name} - 访问${item.visits || 0}次，评分${(item.score || 0).toFixed(1)}`
+              ).join('\n')
+              return `⭐ ${card.title}\n${itemsText}`
+            }
+            return `⭐ ${card.title}：${card.content || '暂无推荐'}`
+          } else if (card.type === 'alert') {
+            return `⚠️ ${card.title}\n${card.content}`
+          }
+          return `${card.title}：${card.content}`
+        }).join('\n\n')
+        
+        // 组合人性化回复和详细信息
+        content = content + (cardsContent ? '\n\n' + cardsContent : '')
+      }
+      
       const assistantMessage = {
         role: 'assistant',
-        content: res.cards ? JSON.stringify(res.cards, null, 2) : '抱歉，我暂时无法理解您的问题。',
+        content: content,
       }
       setMessages((prev) => [...prev, assistantMessage])
     } catch (error) {

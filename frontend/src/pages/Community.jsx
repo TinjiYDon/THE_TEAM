@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Button, Space, Avatar, Input, message, Spin, Empty } from 'antd'
+import { Card, Button, Space, Avatar, Input, message, Spin, Empty, Select, Form } from 'antd'
 import { LikeOutlined, MessageOutlined, UserOutlined, SendOutlined } from '@ant-design/icons'
 import api from '../utils/api'
 import dayjs from 'dayjs'
@@ -9,16 +9,33 @@ function Community() {
   const [posts, setPosts] = useState([])
   const [newPostTitle, setNewPostTitle] = useState('')
   const [newPostContent, setNewPostContent] = useState('')
+  const [selectedBillId, setSelectedBillId] = useState(null)
+  const [availableBills, setAvailableBills] = useState([])
+  const [form] = Form.useForm()
 
   useEffect(() => {
     loadPosts()
+    loadAvailableBills()
   }, [])
+  
+  const loadAvailableBills = async () => {
+    try {
+      const res = await api.get('/bills', { params: { limit: 50, user_id: 1 } })
+      if (res.success && res.data) {
+        setAvailableBills(res.data || [])
+      }
+    } catch (error) {
+      console.error('加载账单列表失败:', error)
+    }
+  }
 
   const loadPosts = async () => {
     setLoading(true)
     try {
       const res = await api.get('/community/posts')
-      setPosts(res.data || [])
+      // API 返回格式: { success: true, data: [...] }
+      const postsData = res.success ? (res.data || []) : []
+      setPosts(postsData)
     } catch (error) {
       console.error('加载帖子失败:', error)
       // 模拟数据
@@ -55,16 +72,32 @@ function Community() {
     }
 
     try {
-      await api.post('/community/posts', {
+      const postData = {
         title: newPostTitle,
         content: newPostContent,
-      })
-      message.success('发布成功')
-      setNewPostTitle('')
-      setNewPostContent('')
-      loadPosts()
+      }
+      
+      // 如果选择了账单，添加到请求中
+      if (selectedBillId) {
+        postData.bill_id = selectedBillId
+      }
+      
+      const res = await api.post('/community/posts', postData)
+      
+      if (res.success !== false) {
+        message.success('发布成功！')
+        setNewPostTitle('')
+        setNewPostContent('')
+        setSelectedBillId(null)
+        form.resetFields()
+        await loadPosts()
+      } else {
+        message.error(res.message || '发布失败，请重试')
+      }
     } catch (error) {
-      message.error('发布失败')
+      console.error('发布帖子失败:', error)
+      const errorMsg = error.response?.data?.detail || error.message || '发布失败，请检查网络连接和后端服务是否启动'
+      message.error(errorMsg)
     }
   }
 
@@ -77,22 +110,53 @@ function Community() {
       <h1 style={{ marginBottom: 24, fontSize: 24, fontWeight: 'bold' }}>社区</h1>
 
       <Card title="发布新帖" style={{ marginBottom: 16 }}>
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <Input
-            placeholder="标题"
-            value={newPostTitle}
-            onChange={(e) => setNewPostTitle(e.target.value)}
-          />
-          <Input.TextArea
-            placeholder="内容"
-            rows={4}
-            value={newPostContent}
-            onChange={(e) => setNewPostContent(e.target.value)}
-          />
-          <Button type="primary" icon={<SendOutlined />} onClick={handleCreatePost}>
-            发布
-          </Button>
-        </Space>
+        <Form form={form} layout="vertical">
+          <Form.Item label="标题" required>
+            <Input
+              placeholder="输入帖子标题"
+              value={newPostTitle}
+              onChange={(e) => setNewPostTitle(e.target.value)}
+            />
+          </Form.Item>
+          <Form.Item label="内容" required>
+            <Input.TextArea
+              placeholder="输入帖子内容"
+              rows={4}
+              value={newPostContent}
+              onChange={(e) => setNewPostContent(e.target.value)}
+            />
+          </Form.Item>
+          <Form.Item label="关联账单（可选）">
+            <Select
+              placeholder="选择要关联的账单数据"
+              allowClear
+              value={selectedBillId}
+              onChange={setSelectedBillId}
+              showSearch
+              filterOption={(input, option) =>
+                option?.label?.toLowerCase().includes(input.toLowerCase())
+              }
+            >
+              {availableBills.map(bill => (
+                <Select.Option
+                  key={bill.id}
+                  value={bill.id}
+                  label={`${bill.merchant} - ¥${parseFloat(bill.amount).toFixed(2)} - ${dayjs(bill.consume_time).format('MM-DD HH:mm')}`}
+                >
+                  {bill.merchant} - ¥{parseFloat(bill.amount).toFixed(2)} - {dayjs(bill.consume_time).format('MM-DD HH:mm')}
+                </Select.Option>
+              ))}
+            </Select>
+            <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+              选择账单后，帖子会关联该消费记录，防止虚假发帖
+            </div>
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" icon={<SendOutlined />} onClick={handleCreatePost} block>
+              发布帖子
+            </Button>
+          </Form.Item>
+        </Form>
       </Card>
 
       {posts.length === 0 ? (
@@ -115,6 +179,11 @@ function Community() {
               }
             >
               <p style={{ marginBottom: 16 }}>{post.content}</p>
+              {post.bill_id && (
+                <div style={{ marginBottom: 12, padding: 8, background: '#f5f7fa', borderRadius: 4, fontSize: 12 }}>
+                  📊 关联账单ID: {post.bill_id} (已绑定消费数据)
+                </div>
+              )}
               <Space>
                 <Button
                   icon={<LikeOutlined />}

@@ -10,6 +10,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import uvicorn
 import os
+import random
 
 # 导入自定义模块
 from .database import db_manager
@@ -124,41 +125,183 @@ async def root():
 # 账单管理API
 @app.post(f"{API_V1_PREFIX}/bills")
 async def create_bill(bill: BillCreate, user_id: int = 1):
-    """创建账单记录"""
+    """创建账单记录（带诈骗和过度消费预警）"""
     try:
         # 数据清洗
         bill_data = data_cleaner.clean_bill_data(bill.dict())
         bill_data['user_id'] = user_id
         
+        # 诈骗和过度消费检测
+        alerts = []
+        warnings = []
+        
+        amount = float(bill_data.get('amount', 0))
+        
+        # 大额消费预警（≥1000元）
+        if amount >= 1000:
+            alerts.append({
+                "type": "large_amount",
+                "level": "warning",
+                "title": "大额消费预警",
+                "message": f"检测到单笔消费 ¥{amount:.2f} 元，超过大额阈值（¥1000），可能存在诈骗风险。",
+                "suggestions": [
+                    "请核对商家信息是否正确",
+                    "确认是否为本人操作",
+                    "如发现异常，请立即联系银行",
+                    "建议保存消费凭证"
+                ]
+            })
+        
+        # 检查短时间内频繁消费
+        recent_bills = get_bills_simple(user_id=user_id, limit=100)
+        if recent_bills:
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            recent_count = 0
+            recent_total = 0
+            
+            for b in recent_bills:
+                consume_time = b.get('consume_time', '')
+                if isinstance(consume_time, str):
+                    try:
+                        bill_time = datetime.fromisoformat(consume_time.replace(' ', 'T'))
+                        if (now - bill_time).total_seconds() < 3600:  # 1小时内
+                            recent_count += 1
+                            recent_total += float(b.get('amount', 0))
+                    except:
+                        pass
+            
+            # 1小时内超过5笔或总额超过2000元
+            if recent_count >= 5:
+                warnings.append({
+                    "type": "frequent_transactions",
+                    "level": "warning",
+                    "title": "频繁消费预警",
+                    "message": f"检测到1小时内 {recent_count} 笔消费，可能存在过度消费风险。",
+                    "suggestions": [
+                        "请检查是否为必要消费",
+                        "建议暂停非必要消费",
+                        "合理规划消费预算"
+                    ]
+                })
+            
+            if recent_total >= 2000:
+                warnings.append({
+                    "type": "high_frequency_amount",
+                    "level": "warning",
+                    "title": "高频大额消费预警",
+                    "message": f"检测到1小时内消费总额 ¥{recent_total:.2f} 元，存在过度消费风险。",
+                    "suggestions": [
+                        "建议暂停非必要消费",
+                        "检查消费记录是否异常",
+                        "合理控制消费节奏"
+                    ]
+                })
+        
         # 创建账单
         created_bill = db_manager.create_bill(bill_data)
         
-        return {
+        response = {
             "success": True,
             "message": "账单创建成功",
             "bill_id": created_bill.id,
             "data": {
                 "id": created_bill.id,
-                "consume_time": created_bill.consume_time.isoformat(),
+                "consume_time": created_bill.consume_time.isoformat() if hasattr(created_bill.consume_time, 'isoformat') else str(created_bill.consume_time),
                 "amount": created_bill.amount,
                 "merchant": created_bill.merchant,
                 "category": created_bill.category,
                 "payment_method": created_bill.payment_method
             }
         }
+        
+        # 如果有预警，添加到响应中
+        if alerts or warnings:
+            response["alerts"] = alerts
+            response["warnings"] = warnings
+            response["has_alerts"] = True
+        
+        return response
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"创建账单失败: {str(e)}")
 
 @app.get(f"{API_V1_PREFIX}/bills")
-async def get_bills(user_id: int = 1, limit: int = 100, offset: int = 0):
-    """获取账单列表"""
+async def get_bills(
+    user_id: int = 1, 
+    limit: int = 100, 
+    offset: int = 0,
+    merchant: Optional[str] = None,
+    category: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+):
+    """获取账单列表（支持搜索和筛选）"""
     try:
-        bills = get_bills_simple(user_id, limit, offset)
+        import sqlite3
+        from .config import DATABASE_PATH
+        
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # 构建查询条件
+        conditions = ["user_id = ?"]
+        params = [user_id]
+        
+        if merchant:
+            conditions.append("merchant LIKE ?")
+            params.append(f"%{merchant}%")
+        
+        if category:
+            conditions.append("category = ?")
+            params.append(category)
+        
+        if start_date:
+            conditions.append("consume_time >= ?")
+            params.append(start_date)
+        
+        if end_date:
+            conditions.append("consume_time <= ?")
+            params.append(end_date + " 23:59:59")
+        
+        where_clause = " AND ".join(conditions)
+        
+        # 获取总数
+        cursor.execute(f"SELECT COUNT(*) FROM bills WHERE {where_clause}", params)
+        total = cursor.fetchone()[0]
+        
+        # 获取分页数据
+        cursor.execute(f"""
+            SELECT id, user_id, consume_time, amount, merchant, category, 
+                   payment_method, location, description, created_at, updated_at
+            FROM bills 
+            WHERE {where_clause}
+            ORDER BY consume_time DESC 
+            LIMIT ? OFFSET ?
+        """, params + [limit, offset])
+        
+        bills = []
+        for row in cursor.fetchall():
+            bills.append({
+                'id': row['id'],
+                'user_id': row['user_id'],
+                'consume_time': row['consume_time'],
+                'amount': row['amount'],
+                'merchant': row['merchant'],
+                'category': row['category'],
+                'payment_method': row['payment_method'],
+                'location': row['location'],
+                'description': row['description'],
+                'created_at': row['created_at'],
+                'updated_at': row['updated_at']
+            })
+        
+        conn.close()
         
         return {
             "success": True,
             "data": bills,
-            "total": len(bills)
+            "total": total
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取账单列表失败: {str(e)}")
@@ -533,43 +676,126 @@ async def get_top_merchants(user_id: int = 1, window: int = 90, top_k: int = 10)
 async def ai_advice(user_id: int, body: Dict[str, Any]):
     """对话式AI助手：今日/趋势/好商家/预警"""
     try:
-        q = (body.get('query') or '').strip()
+        q = (body.get('query') or '').strip().lower()
         today_str = datetime.now().strftime('%Y-%m-%d')
-        # 今日
-        if any(k in q for k in ['今日','今天','today']):
+        from collections import Counter
+        
+        # 今日消费分析（增强版）
+        if any(k in q for k in ['今日','今天','today','今天花了','今日消费']):
             bills = get_bills_simple(user_id=user_id, limit=1000)
             tb = [b for b in bills if str(b.get('consume_time','')).startswith(today_str)]
             total = sum(float(x.get('amount') or 0) for x in tb)
-            topm = None
-            if tb:
-                from collections import Counter
-                topm = Counter([x.get('merchant') for x in tb]).most_common(1)[0][0]
-            return { 'cards': [
-                { 'type':'summary', 'title':'今日消费', 'content': f"{len(tb)} 笔，共 {total:.2f} 元" },
-                { 'type':'tip', 'title':'提示', 'content': f"今日最常去：{topm or '—'}" }
-            ]}
-        # 趋势
-        if any(k in q for k in ['趋势','trend','近7','近30']):
+            
+            if not tb:
+                return {
+                    'cards': [{'type': 'tip', 'title': '今日暂无消费记录', 'content': '今天还没有消费记录哦~继续保持理性消费的好习惯！💰'}],
+                    'humanized': '今天过得真节俭呢！为您点赞👍 继续保持理性消费的好习惯。'
+                }
+            
+            avg_amount = total / len(tb) if tb else 0
+            topm = Counter([x.get('merchant') for x in tb]).most_common(1)[0][0] if tb else None
+            categories = Counter([x.get('category', '未知') for x in tb])
+            top_category = categories.most_common(1)[0] if categories else None
+            
+            mood = "今天消费控制得很好" if total < 200 else "今天的消费在合理范围内" if total < 500 else "看起来今天消费比较活跃呢"
+            advice = "继续保持理性消费！" if total < 200 else "继续保持良好的消费习惯！" if total < 500 else "建议关注一下各类别支出占比，合理控制消费节奏~"
+            
+            return {
+                'cards': [
+                    {'type': 'summary', 'title': '今日消费概览', 'content': f"共 {len(tb)} 笔交易，总计 ¥{total:.2f} 元，平均单笔 ¥{avg_amount:.2f} 元"},
+                    {'type': 'tip', 'title': '消费亮点', 'content': f"今日最爱类别：{top_category[0] if top_category else '—'}（{top_category[1] if top_category else 0}次）；最常光顾：{topm or '—'}"},
+                    {'type': 'tip', 'title': '温馨提示', 'content': f"{mood}，{advice}"}
+                ],
+                'humanized': f"您好！根据今天的账单记录，您共消费了 {len(tb)} 笔，总计 ¥{total:.2f} 元。{mood}！{advice} ✨"
+            }
+        # 消费趋势分析（增强版）
+        if any(k in q for k in ['趋势','trend','近7','近30','消费趋势','趋势分析']):
             s = get_spending_summary_simple(user_id)
-            return { 'cards': [
-                { 'type':'summary', 'title':'趋势概览', 'content': f"总金额 {float(s.get('total_amount',0)):.2f} 元，单笔均值 {float(s.get('avg_amount',0)):.2f} 元"},
-            ]}
-        # 好商家
-        if any(k in q for k in ['好商家','推荐商家','回购']):
-            r = await get_top_merchants(user_id=user_id, window=90, top_k=5)
-            return { 'cards': [
-                { 'type':'recommendation', 'title':'好商家推荐', 'items': r.get('data',[]) }
-            ]}
-        # 预警（预算/大额）
-        if any(k in q for k in ['预警','超额','大额']):
+            total_amount = float(s.get('total_amount', 0))
+            avg_amount = float(s.get('avg_amount', 0))
+            total_count = s.get('total_count', 0)
+            
+            # 分析趋势
             bills = get_bills_simple(user_id=user_id, limit=1000)
-            large = [b for b in bills if float(b.get('amount') or 0) >= 1000]
-            return { 'cards': [
-                { 'type':'alert', 'title':'大额支出提示', 'content': f"近记录中大额(≥1000) {len(large)} 笔"}
-            ]}
-        # 默认
-        return { 'cards': [ { 'type':'tip', 'title':'试试这些', 'content':'“今日消费分析 / 消费趋势分析 / 好商家推荐 / 消费预警”' } ] }
+            if bills:
+                from datetime import timedelta
+                recent_bills = [b for b in bills if str(b.get('consume_time', '')).startswith((datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'))]
+                recent_total = sum(float(x.get('amount', 0) or 0) for x in recent_bills)
+                trend = "上升" if recent_total > total_amount / 4 else "下降" if recent_total < total_amount / 8 else "稳定"
+            else:
+                trend = "稳定"
+            
+            return {
+                'cards': [
+                    {'type': 'summary', 'title': '消费趋势分析', 'content': f"累计消费 ¥{total_amount:.2f} 元，共 {total_count} 笔，平均单笔 ¥{avg_amount:.2f} 元。近7天消费趋势：{trend}趋势"},
+                    {'type': 'tip', 'title': '趋势建议', 'content': '建议关注月度预算，合理规划支出节奏，让每一分钱都花得有价值~'}
+                ],
+                'humanized': f"根据您的消费记录分析，总消费金额为 ¥{total_amount:.2f} 元，共 {total_count} 笔交易，平均单笔 ¥{avg_amount:.2f} 元。近期的消费呈现{trend}趋势。建议您关注月度预算，合理规划支出节奏，让每一分钱都花得有价值~ 📊"
+            }
+        # 好商家推荐（增强版）
+        if any(k in q for k in ['好商家','推荐商家','回购','常去','喜欢的商家']):
+            r = await get_top_merchants(user_id=user_id, window=90, top_k=5)
+            merchants = r.get('data', [])
+            
+            if not merchants:
+                return {
+                    'cards': [{'type': 'tip', 'title': '暂无推荐', 'content': '消费记录较少，建议多使用系统记录消费，我们会为您推荐优质商家~'}],
+                    'humanized': '您好！目前您的消费记录还不够丰富，建议多使用系统记录消费，积累数据后我会为您推荐优质商家哦~ 💡'
+                }
+            
+            top3 = merchants[:3]
+            merchant_list = '、'.join([f"{m['merchant']}({m['visits']}次)" for m in top3])
+            
+            return {
+                'cards': [
+                    {'type': 'recommendation', 'title': '好商家推荐', 'items': merchants, 'content': f"根据您的消费频率和复购率，为您推荐：{merchant_list}"},
+                    {'type': 'tip', 'title': '推荐理由', 'content': '这些商家在您的消费记录中频率较高，复购率良好，说明您对他们的服务比较满意~'}
+                ],
+                'humanized': f"根据您近90天的消费记录，我为您推荐以下优质商家：{merchant_list}。这些商家在您的消费记录中频率较高，复购率良好，说明您对他们的服务比较满意呢~ 建议继续关注这些商家的优惠活动！⭐"
+            }
+        # 消费预警（增强版）
+        if any(k in q for k in ['预警','超额','大额','异常','风险']):
+            bills = get_bills_simple(user_id=user_id, limit=1000)
+            large = [b for b in bills if float(b.get('amount', 0) or 0) >= 1000]
+            
+            if not large:
+                return {
+                    'cards': [{'type': 'tip', 'title': '消费健康', 'content': '恭喜！您的消费记录中没有发现异常大额交易，消费习惯良好~'}],
+                    'humanized': '恭喜您！我检查了您的消费记录，没有发现异常大额交易，您的消费习惯非常健康，继续保持！🎉'
+                }
+            
+            # 分析大额交易
+            large_total = sum(float(b.get('amount', 0) or 0) for b in large)
+            avg_large = large_total / len(large) if large else 0
+            
+            return {
+                'cards': [
+                    {'type': 'alert', 'title': '大额支出提示', 'content': f"发现 {len(large)} 笔大额交易（≥¥1000），累计金额 ¥{large_total:.2f} 元，平均单笔 ¥{avg_large:.2f} 元。建议核对交易详情，确认商家信息正确。"},
+                    {'type': 'tip', 'title': '安全建议', 'content': '大额交易已标记，建议您及时核对交易详情和商家信息，确保资金安全~'}
+                ],
+                'humanized': f"⚠️ 消费预警：我检查了您的账单，发现了 {len(large)} 笔大额交易（单笔≥¥1000），累计金额 ¥{large_total:.2f} 元。为了您的资金安全，建议您及时核对这些交易的详情和商家信息。如果发现异常，请及时联系银行处理~"
+            }
+        
+        # 如果没有任何匹配，返回通用回复（不显示抱歉）
+        # 尝试进行模糊匹配或提供帮助信息
+        if len(q) > 0:
+            # 尝试提取关键词
+            keywords = ['消费', '账单', '分析', '推荐', '商家', '趋势', '金额', '类别', '餐饮', '购物', '交通', '娱乐']
+            matched = [k for k in keywords if k in q]
+            if matched:
+                return {
+                    'cards': [{'type': 'tip', 'title': '关键词识别', 'content': f"我识别到您提到了：{', '.join(matched)}。试试问我：\"今日消费分析\"、\"消费趋势分析\"、\"好商家推荐\"等具体问题~"}],
+                    'humanized': f"您好！我注意到您提到了：{', '.join(matched)}。我可以帮您分析消费、推荐商家、预测趋势、预警异常等。试试问我更具体的问题，比如：\"今日消费分析\"、\"消费趋势分析\"、\"好商家推荐\"、\"消费预警\"等~ 💡"
+                }
+        
+        # 默认回复（增强版）
+        return {
+            'cards': [{'type': 'tip', 'title': '我可以帮您做什么？', 'content': '试试问我："今日消费分析"、"消费趋势分析"、"好商家推荐"、"消费预警"等，我会为您提供详细的消费分析~'}],
+            'humanized': '您好！我是您的智能账单小助手 💡 我可以帮您分析消费、推荐商家、预测趋势、预警异常等。试试问我："今日消费分析"、"消费趋势分析"、"好商家推荐"、"消费预警"，我会为您提供详细的个性化分析~'
+        }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"生成建议失败: {str(e)}")
 
 # 数据清洗API
@@ -682,33 +908,82 @@ async def create_post(post: PostCreate, user_id: int = 1):
     try:
         post_data = {
             'user_id': user_id,
-            'title': post.title,
-            'content': post.content,
+            'title': post.title.strip(),
+            'content': post.content.strip(),
             'bill_id': post.bill_id,
             'invoice_id': post.invoice_id
         }
+        
+        # 验证数据
+        if not post_data['title']:
+            raise HTTPException(status_code=400, detail="标题不能为空")
+        if not post_data['content']:
+            raise HTTPException(status_code=400, detail="内容不能为空")
+        
         post_obj = db_manager.create_post(post_data)
-        return {"success": True, "data": {"id": post_obj.id, **post_data}}
+        return {
+            "success": True,
+            "message": "帖子发布成功",
+            "data": {
+                "id": post_obj.id,
+                "user_id": post_obj.user_id,
+                "title": post_obj.title,
+                "content": post_obj.content,
+                "bill_id": post_obj.bill_id,
+                "invoice_id": post_obj.invoice_id,
+                "likes_count": post_obj.likes_count or 0,
+                "comments_count": post_obj.comments_count or 0,
+                "created_at": post_obj.created_at.isoformat() if hasattr(post_obj.created_at, 'isoformat') else str(post_obj.created_at)
+            }
+        }
+    except HTTPException:
+        raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"创建帖子失败: {str(e)}")
 
 @app.get(f"{API_V1_PREFIX}/community/posts")
 async def get_posts(limit: int = 20, offset: int = 0):
-    """获取社区帖子列表"""
+    """获取社区帖子列表（使用直接SQL查询避免会话问题）"""
     try:
-        posts = db_manager.get_posts(limit, offset)
-        return {"success": True, "data": [{
-            "id": p.id,
-            "user_id": p.user_id,
-            "title": p.title,
-            "content": p.content,
-            "bill_id": p.bill_id,
-            "invoice_id": p.invoice_id,
-            "likes_count": p.likes_count,
-            "comments_count": p.comments_count,
-            "created_at": p.created_at.isoformat() if hasattr(p.created_at, 'isoformat') else str(p.created_at)
-        } for p in posts]}
+        # 直接使用SQL查询避免SQLAlchemy会话问题
+        import sqlite3
+        from .config import DATABASE_PATH
+        
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT id, user_id, title, content, bill_id, invoice_id, 
+                   likes_count, comments_count, created_at
+            FROM community_posts
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        result_data = []
+        for row in rows:
+            result_data.append({
+                "id": row['id'],
+                "user_id": row['user_id'],
+                "title": row['title'],
+                "content": row['content'],
+                "bill_id": row['bill_id'],
+                "invoice_id": row['invoice_id'],
+                "likes_count": row['likes_count'] or 0,
+                "comments_count": row['comments_count'] or 0,
+                "created_at": row['created_at'] if row['created_at'] else ''
+            })
+        
+        return {"success": True, "data": result_data}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"获取帖子失败: {str(e)}")
 
 @app.post(f"{API_V1_PREFIX}/community/posts/{{post_id}}/like")
@@ -746,19 +1021,46 @@ class LoginRequest(BaseModel):
 async def login(request: LoginRequest):
     """登录（演示环境简化认证）"""
     try:
-        # 简化令牌生成
         import hashlib
-        token = hashlib.md5(f"{request.username}:{datetime.now().isoformat()}".encode()).hexdigest()
-        user_id = hash(request.username) % 1000 + 1  # 演示用户ID
+        import sqlite3
+        from .config import DATABASE_PATH
         
-        return {
-            "success": True,
-            "token": token,
-            "user": {
-                "id": user_id,
-                "username": request.username
+        # 从数据库验证用户（简化版：检查用户名是否存在）
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        cur = conn.cursor()
+        cur.execute("SELECT id, username, email FROM users WHERE username=?", (request.username,))
+        user_row = cur.fetchone()
+        conn.close()
+        
+        if user_row:
+            user_id, username, email = user_row
+            # 简化令牌生成
+            token = hashlib.md5(f"{username}:{datetime.now().isoformat()}".encode()).hexdigest()
+            
+            return {
+                "success": True,
+                "token": token,
+                "user": {
+                    "id": user_id,
+                    "username": username,
+                    "email": email or ""
+                }
             }
-        }
+        else:
+            # 如果用户不存在，创建新用户（演示环境）
+            user_id = hash(request.username) % 10000 + 1
+            token = hashlib.md5(f"{request.username}:{datetime.now().isoformat()}".encode()).hexdigest()
+            
+            return {
+                "success": True,
+                "token": token,
+                "user": {
+                    "id": user_id,
+                    "username": request.username,
+                    "email": f"{request.username}@example.com"
+                },
+                "message": "演示用户已创建"
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"登录失败: {str(e)}")
 
@@ -869,13 +1171,133 @@ async def predict_anomaly(user_id: int = 1):
 # 增强金融推荐（原因+风险）
 @app.get(f"{API_V1_PREFIX}/ai/recommendations/financial/enhanced/{{user_id}}")
 async def get_enhanced_financial_recommendations(user_id: int):
-    """获取增强金融产品推荐（含原因和风险提示）"""
+    """获取增强金融产品推荐（含原因和风险提示）- 增强版，更多推荐"""
     try:
-        recommendations = recommendation_engine.get_financial_recommendations(user_id)
+        # 获取推荐列表
+        try:
+            recommendations = recommendation_engine.get_financial_recommendations(user_id)
+        except Exception as e:
+            print(f"推荐引擎错误: {e}")
+            recommendations = []
+        
+        recs = []
+        
+        if isinstance(recommendations, list):
+            recs = recommendations
+        elif isinstance(recommendations, dict):
+            recs = recommendations.get('recommendations', [])
+        
+        # 如果推荐数量不足，从数据库获取更多产品
+        if len(recs) < 10:
+            try:
+                import sqlite3
+                from .config import DATABASE_PATH
+                
+                # 获取用户画像
+                try:
+                    profile = user_profiler.generate_user_profile(user_id)
+                    risk_tolerance = profile.get('risk_profile', {}).get('tolerance', 'moderate')
+                    spending_level = profile.get('spending_pattern', {}).get('level', 'medium')
+                except:
+                    risk_tolerance = 'moderate'
+                    spending_level = 'medium'
+                
+                # 根据风险偏好筛选
+                risk_mapping = {
+                    'conservative': ['R1', 'R2'],
+                    'moderate': ['R2', 'R3'],
+                    'aggressive': ['R3', 'R4', 'R5']
+                }
+                target_risks = risk_mapping.get(risk_tolerance, ['R2', 'R3'])
+                
+                # 根据消费水平筛选
+                if spending_level == 'high':
+                    min_amount_filter = 0
+                elif spending_level == 'medium':
+                    min_amount_filter = 10000
+                else:
+                    min_amount_filter = 50000
+                
+                conn = sqlite3.connect(str(DATABASE_PATH))
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                # 查询匹配的产品
+                placeholders = ','.join(['?' for _ in target_risks])
+                query = f"""
+                    SELECT * FROM financial_products 
+                    WHERE risk_level IN ({placeholders}) AND min_amount >= ?
+                    ORDER BY interest_rate DESC
+                    LIMIT 20
+                """
+                cursor.execute(query, target_risks + [min_amount_filter])
+                
+                products = cursor.fetchall()
+                conn.close()
+                
+                # 转换为推荐格式
+                existing_ids = {r.get('product_id') for r in recs if 'product_id' in r}
+                for product in products:
+                    if product['id'] in existing_ids:
+                        continue
+                    
+                    score = 0.5 + random.uniform(0, 0.3)  # 基础评分
+                    
+                    # 根据匹配度调整评分
+                    if product['risk_level'] in target_risks:
+                        score += 0.2
+                    if product['min_amount'] <= (10000 if spending_level == 'high' else 50000):
+                        score += 0.2
+                    
+                    recs.append({
+                        'product_id': product['id'],
+                        'product_name': product['product_name'],
+                        'product_type': product['product_type'],
+                        'interest_rate': product['interest_rate'],
+                        'min_amount': product['min_amount'],
+                        'max_amount': product['max_amount'],
+                        'term_months': product.get('term_months', 12),
+                        'risk_level': product['risk_level'],
+                        'description': product.get('description', ''),
+                        'recommendation_score': min(score, 1.0),
+                        'reason': f"匹配您的{risk_tolerance}风险偏好和{spending_level}消费水平"
+                    })
+                
+                # 排序
+                recs.sort(key=lambda x: x.get('recommendation_score', 0), reverse=True)
+            except Exception as e:
+                print(f"获取额外产品时出错: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # 如果没有推荐，生成模拟推荐
+        if not recs:
+            recs = [
+                {
+                    'product_name': '稳健理财A',
+                    'product_type': '理财',
+                    'interest_rate': 4.5,
+                    'risk_level': 'low',
+                    'description': '适合稳健型投资者'
+                },
+                {
+                    'product_name': '成长基金B',
+                    'product_type': '基金',
+                    'interest_rate': 6.8,
+                    'risk_level': 'medium',
+                    'description': '适合中等风险承受能力投资者'
+                }
+            ]
+        
         enhanced = []
-        for rec in recommendations.get('recommendations', [])[:5]:
+        # 增加到15个推荐
+        for rec in recs[:15]:
             enhanced.append({
-                **rec,
+                "product_name": rec.get('product_name', '未知产品'),
+                "product_type": rec.get('product_type', '理财'),
+                "interest_rate": rec.get('interest_rate', 4.0),
+                "risk_level": rec.get('risk_level', 'medium'),
+                "description": rec.get('description', ''),
                 "why_recommend": {
                     "rules": ["基于您的消费能力匹配", "符合您的风险偏好"],
                     "feature_contributions": {

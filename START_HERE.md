@@ -1,157 +1,164 @@
-# 🚀 账单查询与管理系统 - 快速启动指南
+# 🚀 快速启动指南
 
-## ✅ 依赖已安装完成！
+## 第一步：启动后端服务器
 
-所有必需的Python包都已安装，现在您可以开始使用系统了。
-
-## 📋 三种运行方式
-
-### 方法1：一键测试和运行（推荐）⭐
-
-```bash
-python test_and_run.py
-```
-
-这个脚本会：
-- ✅ 检查依赖包
-- ✅ 测试数据库连接
-- ✅ 测试所有功能模块
-- ✅ 运行简单演示
-- ✅ 提供服务器启动选项
-
----
-
-### 方法2：分步运行
-
-```bash
-# 步骤1：生成测试数据
-python data/unified_data_generator.py
-
-# 步骤2：测试功能
-python test_api_direct.py
-
-# 步骤3：启动服务器
-python run_server.py
-```
-
----
-
-### 方法3：直接启动服务器
-
+### 方法1：使用启动脚本（推荐）
 ```bash
 python run_server.py
 ```
 
-然后在浏览器中访问：
-- 主页：http://localhost:8000
-- API文档：http://localhost:8000/docs
-- ReDoc：http://localhost:8000/redoc
-
----
-
-## 🎯 快速测试
-
-如果您想快速验证系统是否正常工作：
-
+### 方法2：使用uvicorn直接启动
 ```bash
-python test_api_direct.py
+uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-**预期输出**：
-```
-数据库连接: [OK]
-查询功能: [OK]
-消费分析: [OK]
-智能搜索: [OK]
-```
+### 验证服务器启动
+服务器启动后，您应该看到：
+- 服务器地址: http://0.0.0.0:8000
+- API文档: http://0.0.0.0:8000/docs
 
----
+打开浏览器访问 http://localhost:8000/docs 验证API文档是否正常显示。
 
-## 📊 系统功能
+## 第二步：运行测试
 
-### 核心功能
-- ✅ 账单管理（CRUD操作）
-- ✅ 智能查询（自然语言处理）
-- ✅ 消费分析（多维度统计）
-- ✅ 数据可视化（多种图表）
-- ✅ 发票管理（OCR识别）
-- ✅ 用户画像（行为分析）
-- ✅ 推荐系统（金融产品推荐）
-
-### 测试数据
-- 用户数量：3个
-- 账单数量：150条
-- 发票数量：60条
-- 金融产品：5个
-- 贷款产品：5个
-
----
-
-## 🔧 常见问题
-
-### 问题1：端口被占用
+### 快速测试（推荐）
 ```bash
-# 解决方案：停止Python进程
-taskkill /f /im python.exe
+python start_and_test.py
 ```
 
-### 问题2：数据库不存在
+### 完整测试
 ```bash
-# 解决方案：重新生成数据库
-python recreate_database_fixed.py
+python test_features_fixed.py
 ```
 
-### 问题3：API返回500错误
+### 测试特定API
 ```bash
-# 解决方案：检查修复的会话问题
-python fix_sqlalchemy_session.py
+python test_specific_apis.py
 ```
 
----
+## 第三步：启动前端服务（可选）
 
-## 📱 API使用示例
-
-### 获取账单列表
+### 进入前端目录
 ```bash
-curl "http://localhost:8000/api/v1/bills?user_id=1&limit=10"
+cd frontend
 ```
 
-### 获取消费汇总
+### 安装依赖（首次运行）
 ```bash
-curl "http://localhost:8000/api/v1/analysis/summary?user_id=1"
+npm install
 ```
 
-### 健康检查
+### 启动开发服务器
 ```bash
-curl "http://localhost:8000/api/v1/health"
+npm run dev
 ```
 
----
+前端服务启动后，访问 http://localhost:3000
 
-## 🎉 开始使用
+## ✅ 完整启动流程
 
-**最简单的启动方式**：
-
+### 终端1：后端服务
 ```bash
 python run_server.py
 ```
+保持此终端窗口运行。
 
-然后在浏览器访问：**http://localhost:8000**
+### 终端2：前端服务（可选）
+```bash
+cd frontend
+npm run dev
+```
+保持此终端窗口运行。
 
-系统会自动：
-1. ✅ 初始化数据库
-2. ✅ 加载AI模型（jieba分词）
-3. ✅ 启动API服务器
-4. ✅ 准备好所有API端点
+### 终端3：测试验证
+```bash
+python start_and_test.py
+```
+
+## 📋 系统访问地址
+
+- **前端主页**: http://localhost:3000
+- **后端API文档**: http://localhost:8000/docs
+- **健康消费**: http://localhost:3000/health
+- **社区**: http://localhost:3000/community
+- **AI助手**: http://localhost:3000/ai-assistant
+- **金融产品推荐**: http://localhost:3000/recommendations
+
+## 🔐 测试账号
+
+- **用户名**: user1 / user2 / user3
+- **密码**: demo123
+
+## 🧪 测试清单
+
+### 后端测试
+- [ ] 服务器启动成功
+- [ ] API文档可访问
+- [ ] 健康检查API正常
+- [ ] 账单列表API正常
+- [ ] AI助手API正常
+- [ ] 社区帖子API正常
+- [ ] 金融产品推荐API正常
+
+### 前端测试
+- [ ] 前端页面可访问
+- [ ] 登录功能正常
+- [ ] 账单管理页面正常
+- [ ] AI助手页面正常
+- [ ] 社区页面正常
+- [ ] 健康消费页面正常
+
+## ⚠️ 常见问题
+
+### 1. 服务器启动失败
+- 检查端口8000是否被占用
+- 检查数据库文件是否存在：`data/bill_db.sqlite`
+- 查看错误日志
+
+### 2. API返回500错误
+- **重要**：如果刚刚修改了代码，请重启服务器
+- 检查数据库连接
+- 查看控制台错误信息
+
+### 3. 前端无法连接后端
+- 确认后端服务器正在运行
+- 检查后端地址：http://localhost:8000
+- 查看浏览器控制台错误
+
+### 4. 前端构建失败
+- 确保已安装Node.js和npm
+- 运行 `npm install` 安装依赖
+- 检查 `package.json` 配置
+
+## 📊 测试结果预期
+
+### 完整测试通过后应显示：
+```
+测试完成: 12/12 通过
+✅ 所有API测试通过！系统运行正常。
+```
+
+### API测试列表：
+1. ✅ 健康检查
+2. ✅ 账单列表
+3. ✅ 消费汇总
+4. ✅ 商家推荐
+5. ✅ AI今日消费分析
+6. ✅ AI消费趋势分析
+7. ✅ AI好商家推荐
+8. ✅ 金融产品推荐
+9. ✅ 社区帖子列表
+10. ✅ 预算列表
+11. ✅ 预算预警
+12. ✅ 大额交易检测
+
+## 🎯 下一步
+
+1. 启动后端服务器
+2. 运行测试验证
+3. 启动前端服务
+4. 访问系统进行功能测试
 
 ---
 
-## 📞 需要帮助？
-
-如果遇到任何问题：
-1. 检查错误信息
-2. 查看终端输出
-3. 运行 `python test_api_direct.py` 验证核心功能
-4. 查看 `FINAL_TESTING_GUIDE.md` 获取详细文档
-
-**祝您使用愉快！** 🚀
+**提示**: 如果遇到任何问题，请查看错误日志或运行测试脚本诊断问题。
