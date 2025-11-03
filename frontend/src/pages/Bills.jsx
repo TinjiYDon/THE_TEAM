@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react'
-import { Table, Button, Space, Tag, Input, Select, DatePicker, Upload, message, Modal, Descriptions } from 'antd'
+import React, { useEffect, useState, useRef } from 'react'
+import { Table, Button, Space, Tag, Input, Select, DatePicker, Upload, message, Modal, Descriptions, Alert, Dropdown, Checkbox, Card, Grid } from 'antd'
 import { PlusOutlined, UploadOutlined, SearchOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons'
 import api from '../utils/api'
 import dayjs from 'dayjs'
+import { FixedSizeList as List } from 'react-window'
 
 const { RangePicker } = DatePicker
 
@@ -16,15 +17,30 @@ function Bills() {
   const [dateRange, setDateRange] = useState(null)
   const [viewModalVisible, setViewModalVisible] = useState(false)
   const [selectedBill, setSelectedBill] = useState(null)
+  const [error, setError] = useState(null)
+  const [visibleColumns, setVisibleColumns] = useState(['consume_time','merchant','amount','category','payment_method','action'])
+  const debounceTimerRef = useRef(null)
+  const [enableInfinite, setEnableInfinite] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [cardView, setCardView] = useState(false)
+  const screens = Grid.useBreakpoint()
 
   useEffect(() => {
     loadBills()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pagination.current, pagination.pageSize])
 
-  const loadBills = async () => {
-    setLoading(true)
+  // 根据屏幕自动切换默认视图（小屏优先卡片）
+  useEffect(() => {
+    if (screens && typeof screens.md !== 'undefined') {
+      setCardView(!screens.md)
+    }
+  }, [screens])
+
+  const loadBills = async (append = false) => {
+    append ? setLoadingMore(true) : setLoading(true)
     try {
+      setError(null)
       const params = {
         limit: pagination.pageSize,
         offset: (pagination.current - 1) * pagination.pageSize,
@@ -42,13 +58,14 @@ function Bills() {
       const res = await api.get('/bills', { params })
       // API 返回格式: { success: true, data: [...], total: ... }
       const billsData = res.success ? (res.data || []) : []
-      setBills(billsData)
-      setPagination({ ...pagination, total: res.total || billsData.length })
+      setBills(append ? [...bills, ...billsData] : billsData)
+      setPagination({ ...pagination, total: res.total || (append ? bills.length + billsData.length : billsData.length) })
     } catch (error) {
       console.error('加载账单失败:', error)
+      setError(error)
       message.error('加载账单失败')
     } finally {
-      setLoading(false)
+      append ? setLoadingMore(false) : setLoading(false)
     }
   }
   
@@ -60,6 +77,36 @@ function Bills() {
     }, 100)
   }
   
+  // 输入防抖：商家搜索
+  useEffect(() => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    debounceTimerRef.current = setTimeout(() => {
+      const newPagination = { ...pagination, current: 1 }
+      setPagination(newPagination)
+      loadBills()
+    }, 300)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchMerchant])
+
+  // 无限滚动（流式加载）
+  useEffect(() => {
+    if (!enableInfinite) return
+    const el = document.querySelector('.bills-table .ant-table-body')
+    if (!el) return
+    const onScroll = () => {
+      const nearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
+      const hasMore = bills.length < pagination.total
+      if (nearBottom && hasMore && !loadingMore && !loading) {
+        const nextPage = pagination.current + 1
+        setPagination(prev => ({ ...prev, current: nextPage }))
+        setTimeout(() => loadBills(true), 0)
+      }
+    }
+    el.addEventListener('scroll', onScroll)
+    return () => el.removeEventListener('scroll', onScroll)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enableInfinite, bills, pagination.current, pagination.total, loadingMore, loading])
+
   const handleAddBill = () => {
     // 显示添加账单表单（简化版）
     Modal.info({
@@ -96,7 +143,6 @@ function Bills() {
                 message={alert.message}
                 type="warning"
                 showIcon
-                icon={<WarningOutlined />}
                 style={{ marginBottom: 16 }}
               />
               <div>
@@ -114,7 +160,31 @@ function Bills() {
       })
     }
   }
-  
+
+  const exportCSV = () => {
+    if (!bills || bills.length === 0) {
+      message.info('暂无可导出的数据')
+      return
+    }
+    const headers = ['ID','时间','商家','金额','类别','支付方式']
+    const rows = bills.map(b => [
+      b.id,
+      dayjs(b.consume_time).format('YYYY-MM-DD HH:mm:ss'),
+      (b.merchant || '').replace(/\"/g,'\\"'),
+      parseFloat(b.amount).toFixed(2),
+      b.category || '',
+      b.payment_method || ''
+    ])
+    const csv = [headers, ...rows].map(r => r.map(x => `"${x}"`).join(',')).join('\n')
+    const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `bills_${dayjs().format('YYYYMMDD_HHmmss')}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const handleViewBill = async (billId) => {
     try {
       const res = await api.get(`/bills/${billId}`)
@@ -141,17 +211,19 @@ function Bills() {
     }
   }
 
-  const columns = [
+  const allColumns = [
     {
       title: '时间',
       dataIndex: 'consume_time',
       key: 'consume_time',
       render: (text) => dayjs(text).format('YYYY-MM-DD HH:mm'),
+      responsive: ['xs','sm','md','lg','xl'],
     },
     {
       title: '商家',
       dataIndex: 'merchant',
       key: 'merchant',
+      responsive: ['xs','sm','md','lg','xl'],
     },
     {
       title: '金额',
@@ -159,17 +231,20 @@ function Bills() {
       key: 'amount',
       render: (amount) => `¥${parseFloat(amount).toFixed(2)}`,
       sorter: true,
+      responsive: ['xs','sm','md','lg','xl'],
     },
     {
       title: '类别',
       dataIndex: 'category',
       key: 'category',
       render: (category) => <Tag color="blue">{category}</Tag>,
+      responsive: ['sm','md','lg','xl'],
     },
     {
       title: '支付方式',
       dataIndex: 'payment_method',
       key: 'payment_method',
+      responsive: ['md','lg','xl'],
     },
     {
       title: '操作',
@@ -204,6 +279,42 @@ function Bills() {
     },
   ]
 
+  // 列显隐：从本地存储恢复/持久化
+  const COLS_KEY = 'bills_visible_cols_v1'
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(COLS_KEY) || 'null')
+      if (Array.isArray(saved) && saved.length > 0) setVisibleColumns(saved)
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    localStorage.setItem(COLS_KEY, JSON.stringify(visibleColumns))
+  }, [visibleColumns])
+
+  const columns = allColumns.filter(col => visibleColumns.includes(col.key))
+
+  const columnMenuItems = allColumns.map(col => ({
+    key: col.key,
+    label: (
+      <Checkbox
+        checked={visibleColumns.includes(col.key)}
+        onChange={(e) => {
+          const checked = e.target.checked
+          setVisibleColumns(prev => {
+            const base = new Set(prev)
+            if (checked) base.add(col.key); else base.delete(col.key)
+            // 至少保留一列
+            const next = Array.from(base)
+            return next.length === 0 ? prev : next
+          })
+        }}
+      >
+        {col.title}
+      </Checkbox>
+    )
+  }))
+
   return (
     <div>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -211,6 +322,18 @@ function Bills() {
         <Space>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleAddBill}>
             添加账单
+          </Button>
+          <Button onClick={exportCSV}>导出 CSV</Button>
+          <Dropdown
+            menu={{
+              items: columnMenuItems
+            }}
+            trigger={['click']}
+          >
+            <Button>列显示设置</Button>
+          </Dropdown>
+          <Button onClick={() => setCardView(v => !v)}>
+            {cardView ? '切换为表格' : '切换为卡片'}
           </Button>
           <Upload
             action="/api/v1/invoices/upload"
@@ -271,23 +394,81 @@ function Bills() {
             重置
           </Button>
         </Space>
+        {error && (
+          <div style={{ marginTop: 12 }}>
+            <Alert type="warning" showIcon message="加载失败" description="请检查网络或后端服务" />
+          </div>
+        )}
       </div>
 
-      <Table
-        columns={columns}
-        dataSource={bills}
-        loading={loading}
-        rowKey="id"
-        pagination={{
-          ...pagination,
-          showSizeChanger: true,
-          showTotal: (total) => `共 ${total} 条`,
-        }}
-        onChange={(newPagination) => {
-          setPagination(newPagination)
-          setTimeout(() => loadBills(), 0)
-        }}
-      />
+      {cardView ? (
+        <List
+          height={600}
+          itemCount={bills.length}
+          itemSize={120}
+          width={'100%'}
+          style={{ background: 'transparent' }}
+        >
+          {({ index, style }) => {
+            const b = bills[index]
+            if (!b) return null
+            return (
+              <div style={{ ...style, padding: '0 0 12px 0' }} key={b.id}>
+                <Card>
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <strong>{b.merchant}</strong>
+                      <span style={{ color: '#E02020', fontWeight: 600 }}>¥{parseFloat(b.amount).toFixed(2)}</span>
+                    </div>
+                    <div style={{ color: '#999' }}>{dayjs(b.consume_time).format('YYYY-MM-DD HH:mm')}</div>
+                    <div>
+                      <Tag color="blue" style={{ marginRight: 8 }}>{b.category}</Tag>
+                      <span>{b.payment_method}</span>
+                    </div>
+                    <Space>
+                      <Button size="small" onClick={() => handleViewBill(b.id)} icon={<EyeOutlined />}>查看</Button>
+                      <Button size="small" danger onClick={() => {
+                        Modal.confirm({
+                          title: '确认删除',
+                          content: '确定要删除这条账单记录吗？',
+                          onOk: () => handleDeleteBill(b.id),
+                        })
+                      }} icon={<DeleteOutlined />}>删除</Button>
+                    </Space>
+                  </Space>
+                </Card>
+              </div>
+            )
+          }}
+        </List>
+      ) : (
+        <Table
+          className="bills-table"
+          columns={columns}
+          dataSource={bills}
+          loading={loading}
+          rowKey="id"
+          size="middle"
+          sticky
+          scroll={{ y: 520, x: 'max-content' }}
+          locale={{
+            emptyText: '暂无账单数据，试试调整筛选条件或添加账单',
+          }}
+          pagination={{
+            ...pagination,
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条`,
+          }}
+          onChange={(newPagination) => {
+            setPagination(newPagination)
+            setTimeout(() => loadBills(), 0)
+          }}
+        />
+      )}
+
+      {loadingMore && (
+        <div style={{ textAlign: 'center', color: '#999', padding: 8 }}>加载更多...</div>
+      )}
 
       <Modal
         title="账单详情"

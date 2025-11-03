@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import pandas as pd
+import time
+import threading
 
 from .config import DATABASE_URL, DATABASE_PATH
 from .models import (
@@ -49,6 +51,11 @@ class DatabaseManager:
     def __init__(self):
         self.engine = engine
         self.SessionLocal = SessionLocal
+        # 简易内存缓存（短期，避免热点统计重复计算）
+        self._summary_cache: Dict[str, Any] = {}
+        self._category_cache: Dict[str, Any] = {}
+        self._cache_ttl_seconds = 30
+        self._lock = threading.Lock()
     
     # 账单相关操作
     def create_bill(self, bill_data: Dict[str, Any]) -> Bill:
@@ -58,6 +65,12 @@ class DatabaseManager:
             session.add(bill)
             session.commit()
             session.refresh(bill)
+            # 失效并预热缓存
+            try:
+                self._invalidate_user_caches(bill.user_id)
+                self._warm_caches_async(bill.user_id)
+            except Exception:
+                pass
             return bill
     
     def get_bills(self, user_id: int = 1, limit: int = 100, offset: int = 0) -> List[Bill]:
@@ -101,6 +114,11 @@ class DatabaseManager:
                     setattr(bill, key, value)
                 session.commit()
                 session.refresh(bill)
+                try:
+                    self._invalidate_user_caches(bill.user_id)
+                    self._warm_caches_async(bill.user_id)
+                except Exception:
+                    pass
                 return bill
             return None
     
@@ -111,8 +129,29 @@ class DatabaseManager:
             if bill:
                 session.delete(bill)
                 session.commit()
+                try:
+                    self._invalidate_user_caches(bill.user_id)
+                    self._warm_caches_async(bill.user_id)
+                except Exception:
+                    pass
                 return True
             return False
+
+    # 列表总数计算（供接口使用）
+    def get_bills_total(self, user_id: int = 1, merchant: Optional[str] = None,
+                        category: Optional[str] = None, start_date: Optional[datetime] = None,
+                        end_date: Optional[datetime] = None) -> int:
+        with get_db_session() as session:
+            query = session.query(Bill).filter(Bill.user_id == user_id)
+            if merchant:
+                query = query.filter(Bill.merchant.like(f"%{merchant}%"))
+            if category:
+                query = query.filter(Bill.category == category)
+            if start_date:
+                query = query.filter(Bill.consume_time >= start_date)
+            if end_date:
+                query = query.filter(Bill.consume_time <= end_date)
+            return query.count()
     
     # 发票相关操作
     def create_invoice(self, invoice_data: Dict[str, Any]) -> Invoice:
@@ -134,6 +173,13 @@ class DatabaseManager:
     # 统计分析
     def get_spending_summary(self, user_id: int, start_date: datetime = None, end_date: datetime = None) -> Dict[str, Any]:
         """获取消费汇总统计"""
+        # 缓存键
+        cache_key = f"summary:{user_id}:{start_date.isoformat() if start_date else ''}:{end_date.isoformat() if end_date else ''}"
+        now_ts = time.time()
+        cached = self._summary_cache.get(cache_key)
+        if cached and (now_ts - cached['ts'] <= self._cache_ttl_seconds):
+            return cached['data']
+
         with get_db_session() as session:
             query = session.query(Bill).filter(Bill.user_id == user_id)
             
@@ -145,13 +191,15 @@ class DatabaseManager:
             bills = query.all()
             
             if not bills:
-                return {
+                data = {
                     "total_amount": 0,
                     "total_count": 0,
                     "avg_amount": 0,
                     "categories": {},
                     "payment_methods": {}
                 }
+                self._summary_cache[cache_key] = {"ts": now_ts, "data": data}
+                return data
             
             total_amount = sum(bill.amount for bill in bills)
             total_count = len(bills)
@@ -175,13 +223,15 @@ class DatabaseManager:
                 payment_methods[method]["amount"] += bill.amount
                 payment_methods[method]["count"] += 1
             
-            return {
+            data = {
                 "total_amount": total_amount,
                 "total_count": total_count,
                 "avg_amount": avg_amount,
                 "categories": categories,
                 "payment_methods": payment_methods
             }
+            self._summary_cache[cache_key] = {"ts": now_ts, "data": data}
+            return data
     
     def get_monthly_spending(self, user_id: int, year: int) -> List[Dict[str, Any]]:
         """获取月度消费数据"""
@@ -206,6 +256,12 @@ class DatabaseManager:
     
     def get_category_spending(self, user_id: int, start_date: datetime = None, end_date: datetime = None) -> List[Dict[str, Any]]:
         """获取分类消费数据"""
+        cache_key = f"category:{user_id}:{start_date.isoformat() if start_date else ''}:{end_date.isoformat() if end_date else ''}"
+        now_ts = time.time()
+        cached = self._category_cache.get(cache_key)
+        if cached and (now_ts - cached['ts'] <= self._cache_ttl_seconds):
+            return cached['data']
+
         with get_db_session() as session:
             query = session.query(Bill.category, 
                                 func.sum(Bill.amount).label('total_amount'),
@@ -220,12 +276,34 @@ class DatabaseManager:
             
             result = query.group_by(Bill.category).all()
             
-            return [{
+            data = [{
                 "category": row[0] or "未知",
                 "total_amount": float(row[1]),
                 "count": row[2],
                 "avg_amount": float(row[3])
             } for row in result]
+            self._category_cache[cache_key] = {"ts": now_ts, "data": data}
+            return data
+
+    # 缓存维护
+    def _invalidate_user_caches(self, user_id: int) -> None:
+        with self._lock:
+            self._summary_cache = {k: v for k, v in self._summary_cache.items() if not k.startswith(f"summary:{user_id}:")}
+            self._category_cache = {k: v for k, v in self._category_cache.items() if not k.startswith(f"category:{user_id}:")}
+
+    def _warm_caches_async(self, user_id: int) -> None:
+        t = threading.Thread(target=self._warm_caches, args=(user_id,), daemon=True)
+        t.start()
+
+    def _warm_caches(self, user_id: int) -> None:
+        try:
+            # 预热常用窗口（近30天）
+            end = datetime.now()
+            start = end - timedelta(days=30)
+            _ = self.get_spending_summary(user_id, start, end)
+            _ = self.get_category_spending(user_id, start, end)
+        except Exception:
+            pass
     
     # 金融产品相关
     def create_financial_product(self, product_data: Dict[str, Any]) -> FinancialProduct:

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Row, Col, Statistic, Spin, Alert } from 'antd'
+import { Card, Row, Col, Statistic, Spin, Alert, Button, Skeleton, Space } from 'antd'
 import { DollarOutlined, ShoppingOutlined, RiseOutlined, FallOutlined } from '@ant-design/icons'
 import { Line, Pie } from '@ant-design/charts'
 import api from '../utils/api'
@@ -8,12 +8,14 @@ function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [summary, setSummary] = useState(null)
   const [trendData, setTrendData] = useState([])
+  const [error, setError] = useState(null)
 
   useEffect(() => {
     loadData()
   }, [])
 
   const loadData = async () => {
+    setError(null)
     try {
       // 获取消费汇总
       const summaryRes = await api.get('/analysis/summary?user_id=1')
@@ -54,6 +56,7 @@ function Dashboard() {
       }
     } catch (error) {
       console.error('加载数据失败:', error)
+      setError(error)
       // 设置默认值
       setSummary({
         total_amount: 0,
@@ -110,12 +113,42 @@ function Dashboard() {
   }
 
   if (loading) {
-    return <Spin size="large" style={{ display: 'block', textAlign: 'center', padding: '50px' }} />
+    return (
+      <div>
+        <h1 style={{ marginBottom: 24, fontSize: 24, fontWeight: 'bold' }}>账单小助手</h1>
+        <Row gutter={[16, 16]}>
+          {[1,2,3,4].map((i) => (
+            <Col xs={24} sm={12} lg={6} key={i}>
+              <Card><Skeleton active paragraph={false} /></Card>
+            </Col>
+          ))}
+        </Row>
+        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+          <Col xs={24} lg={14}>
+            <Card title="消费趋势" style={{ height: 400 }}>
+              <Skeleton active style={{ marginTop: 24 }} />
+            </Card>
+          </Col>
+          <Col xs={24} lg={10}>
+            <Card title="消费分类" style={{ height: 400 }}>
+              <Skeleton active style={{ marginTop: 24 }} />
+            </Card>
+          </Col>
+        </Row>
+      </div>
+    )
   }
 
   return (
     <div>
       <h1 style={{ marginBottom: 24, fontSize: 24, fontWeight: 'bold' }}>账单小助手</h1>
+      
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <Space>
+          {error && <span style={{ color: '#d46b08' }}>加载失败，可重试</span>}
+          <Button onClick={loadData}>刷新数据</Button>
+        </Space>
+      </div>
       
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>

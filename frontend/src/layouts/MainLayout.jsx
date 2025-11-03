@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Layout, Menu, Avatar, Dropdown, Space, Modal, Form, Input, Button } from 'antd'
+import { Layout, Menu, Avatar, Dropdown, Space, Modal, Form, Input, Button, Switch, ConfigProvider, theme } from 'antd'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   DashboardOutlined,
@@ -32,6 +32,20 @@ function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
   const [user, setUser] = useState(null)
   const [loginVisible, setLoginVisible] = useState(false)
+  const [darkMode, setDarkMode] = useState(false)
+
+  // 读取/持久化暗黑模式偏好
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('pref_dark_mode')
+      if (v === '1') setDarkMode(true)
+    } catch {}
+  }, [])
+  useEffect(() => {
+    try {
+      localStorage.setItem('pref_dark_mode', darkMode ? '1' : '0')
+    } catch {}
+  }, [darkMode])
   const [form] = Form.useForm()
   const navigate = useNavigate()
   const location = useLocation()
@@ -82,6 +96,7 @@ function MainLayout() {
   }
 
   return (
+    <ConfigProvider theme={{ algorithm: darkMode ? theme.darkAlgorithm : theme.defaultAlgorithm }}>
     <Layout style={{ minHeight: '100vh' }}>
       <Sider
         collapsible
@@ -118,7 +133,7 @@ function MainLayout() {
       </Sider>
       <Layout>
         <Header style={{ 
-          background: '#ffffff', 
+          background: 'transparent', 
           padding: '0 24px',
           display: 'flex',
           justifyContent: 'space-between',
@@ -128,6 +143,10 @@ function MainLayout() {
           <div style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>
             智能账单管理系统
           </div>
+          <Space>
+            <span style={{ color: '#999' }}>暗黑模式</span>
+            <Switch checked={darkMode} onChange={setDarkMode} />
+          </Space>
           {user ? (
             <Dropdown menu={{
               items: [
@@ -190,7 +209,7 @@ function MainLayout() {
         <Content style={{ 
           margin: '24px', 
           padding: '24px', 
-          background: '#ffffff',
+          background: 'transparent',
           borderRadius: 8,
           minHeight: 280
         }}>
@@ -198,6 +217,7 @@ function MainLayout() {
         </Content>
       </Layout>
     </Layout>
+    </ConfigProvider>
   )
 }
 

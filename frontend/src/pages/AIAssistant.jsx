@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Card, Input, Button, Space, Avatar, message, Tag } from 'antd'
+import { Card, Input, Button, Space, Avatar, message, Tag, Tooltip } from 'antd'
 import { SendOutlined, RobotOutlined, UserOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import api from '../utils/api'
 
@@ -130,7 +130,14 @@ function AIAssistant() {
                     color: msg.role === 'user' ? '#ffffff' : '#333',
                   }}
                 >
-                  {msg.content}
+                  <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+                  {msg.role === 'assistant' && (
+                    <div style={{ textAlign: 'right', marginTop: 8 }}>
+                      <Tooltip title="复制">
+                        <Button size="small" onClick={() => navigator.clipboard.writeText(msg.content)}>复制</Button>
+                      </Tooltip>
+                    </div>
+                  )}
                 </Card>
               </Space>
             </div>
