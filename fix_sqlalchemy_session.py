@@ -4,12 +4,16 @@
 import sqlite3
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from pathlib import Path
+
+DB_PATH = Path("data/bill_db.sqlite")
 
 def get_bills_simple(user_id: int = 1, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
     """使用直接SQL查询获取账单，避免SQLAlchemy会话问题"""
-    conn = sqlite3.connect("data/bill_db.sqlite")
+    conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row  # 使结果可以通过列名访问
     cursor = conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
     
     try:
         cursor.execute("""
@@ -44,9 +48,10 @@ def get_bills_simple(user_id: int = 1, limit: int = 100, offset: int = 0) -> Lis
 
 def get_bill_by_id(bill_id: int) -> Optional[Dict[str, Any]]:
     """根据ID获取账单"""
-    conn = sqlite3.connect("data/bill_db.sqlite")
+    conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
     
     try:
         cursor.execute("""
@@ -78,8 +83,9 @@ def get_bill_by_id(bill_id: int) -> Optional[Dict[str, Any]]:
 
 def create_bill_simple(bill_data: Dict[str, Any]) -> int:
     """创建账单记录"""
-    conn = sqlite3.connect("data/bill_db.sqlite")
+    conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
     
     try:
         cursor.execute("""
@@ -107,8 +113,9 @@ def create_bill_simple(bill_data: Dict[str, Any]) -> int:
 
 def get_spending_summary_simple(user_id: int = 1) -> Dict[str, Any]:
     """获取消费汇总"""
-    conn = sqlite3.connect("data/bill_db.sqlite")
+    conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
     
     try:
         # 总消费

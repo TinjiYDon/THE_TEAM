@@ -2,7 +2,7 @@
 数据库操作模块
 """
 import sqlite3
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, event
 from sqlalchemy.orm import sessionmaker
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
@@ -17,8 +17,21 @@ from .models import (
 )
 from sqlalchemy import func
 
-# 创建数据库引擎
-engine = create_engine(DATABASE_URL, echo=False)
+# 创建数据库引擎，启用 SQLite 外键
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+)
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    try:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+    except Exception:
+        pass
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_database():

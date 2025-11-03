@@ -6,6 +6,8 @@ import dayjs from 'dayjs'
 
 const { RangePicker } = DatePicker
 
+const STORAGE_KEY = 'bills_filters_v1'
+
 function Bills() {
   const [loading, setLoading] = useState(false)
   const [bills, setBills] = useState([])
@@ -18,9 +20,33 @@ function Bills() {
   const [selectedBill, setSelectedBill] = useState(null)
 
   useEffect(() => {
+    // 恢复筛选条件
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')
+      if (saved) {
+        setSearchMerchant(saved.searchMerchant || '')
+        setSearchCategory(saved.searchCategory || '')
+        setDateRange(
+          saved.dateRange && saved.dateRange.length === 2
+            ? [dayjs(saved.dateRange[0]), dayjs(saved.dateRange[1])] 
+            : null
+        )
+      }
+    } catch {}
     loadBills()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pagination.current, pagination.pageSize])
+
+  useEffect(() => {
+    // 持久化筛选条件
+    const payload = {
+      searchMerchant,
+      searchCategory,
+      dateRange: dateRange ? [dateRange[0].format('YYYY-MM-DD'), dateRange[1].format('YYYY-MM-DD')] : null,
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchMerchant, searchCategory, dateRange])
 
   const loadBills = async () => {
     setLoading(true)
@@ -92,13 +118,7 @@ function Bills() {
           width: 600,
           content: (
             <div>
-              <Alert
-                message={alert.message}
-                type="warning"
-                showIcon
-                icon={<WarningOutlined />}
-                style={{ marginBottom: 16 }}
-              />
+              <div style={{ marginBottom: 12, color: '#d46b08' }}>{alert.message}</div>
               <div>
                 <strong>建议：</strong>
                 <ul style={{ marginTop: 8 }}>
@@ -278,6 +298,9 @@ function Bills() {
         dataSource={bills}
         loading={loading}
         rowKey="id"
+        locale={{
+          emptyText: '暂无账单数据，试试调整筛选条件或添加账单',
+        }}
         pagination={{
           ...pagination,
           showSizeChanger: true,

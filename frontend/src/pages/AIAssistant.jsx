@@ -7,12 +7,13 @@ function AIAssistant() {
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
-      content: '您好！我是您的账单小助手。我可以帮您分析消费、推荐商家、预测趋势等。试试问我："今日消费分析"或"消费趋势分析"',
+      content: '您好！我是您的账单小助手。我可以帮您分析消费、推荐商家、预测趋势等。试试问我:"今日消费分析"或"消费趋势分析"',
     },
   ])
   const [inputValue, setInputValue] = useState('')
   const [loading, setLoading] = useState(false)
   const messagesEndRef = useRef(null)
+  const inputRef = useRef(null)
 
   const quickActions = [
     { label: '今日消费分析', query: '今日消费分析' },
@@ -29,19 +30,24 @@ function AIAssistant() {
     scrollToBottom()
   }, [messages])
 
-  const handleSend = async () => {
-    if (!inputValue.trim()) return
+  useEffect(() => {
+    // 自动聚焦输入框
+    inputRef.current?.focus()
+  }, [])
 
-    const userMessage = { role: 'user', content: inputValue }
+  const sendQuery = async (queryText) => {
+    if (!queryText.trim()) return
+
+    const userMessage = { role: 'user', content: queryText }
     setMessages((prev) => [...prev, userMessage])
     setInputValue('')
     setLoading(true)
 
     try {
-      const res = await api.post('/ai/advice/1', { query: inputValue })
+      const res = await api.post('/ai/advice/1', { query: queryText })
       
       // 优先使用人性化回复
-      let content = res.humanized || '抱歉，我暂时无法理解您的问题。请试试问我："今日消费分析"、"消费趋势分析"等。'
+      let content = res.humanized || '抱歉，我暂时无法理解您的问题。请试试问我:"今日消费分析"、"消费趋势分析"等。'
       
       // 如果有cards，补充详细信息
       if (res.cards && res.cards.length > 0) {
@@ -81,9 +87,14 @@ function AIAssistant() {
     }
   }
 
+  const handleSend = async () => {
+    if (!inputValue.trim()) return
+    await sendQuery(inputValue)
+  }
+
   const handleQuickAction = (query) => {
-    setInputValue(query)
-    handleSend()
+    // 直接发送，避免读取到未更新的 inputValue
+    sendQuery(query)
   }
 
   return (
@@ -161,6 +172,7 @@ function AIAssistant() {
 
           <Input.Group compact>
             <Input
+              ref={inputRef}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onPressEnter={handleSend}

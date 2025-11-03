@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Row, Col, Statistic, Spin, Alert } from 'antd'
+import { Card, Row, Col, Statistic, Spin, Alert, Button, Empty } from 'antd'
 import { DollarOutlined, ShoppingOutlined, RiseOutlined, FallOutlined } from '@ant-design/icons'
 import { Line, Pie } from '@ant-design/charts'
 import api from '../utils/api'
@@ -66,6 +66,8 @@ function Dashboard() {
     }
   }
 
+  const hasData = (summary && summary.total_count > 0) || (Array.isArray(trendData) && trendData.some(d => d.amount > 0))
+
   const lineConfig = {
     data: trendData,
     xField: 'month',
@@ -116,6 +118,9 @@ function Dashboard() {
   return (
     <div>
       <h1 style={{ marginBottom: 24, fontSize: 24, fontWeight: 'bold' }}>账单小助手</h1>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <Button onClick={loadData}>刷新数据</Button>
+      </div>
       
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
@@ -166,25 +171,42 @@ function Dashboard() {
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={14}>
           <Card title="消费趋势" style={{ height: 400 }}>
-            <Line {...lineConfig} />
+            {trendData && trendData.length > 0 ? (
+              <Line {...lineConfig} />
+            ) : (
+              <Empty description="暂无趋势数据" />
+            )}
           </Card>
         </Col>
         <Col xs={24} lg={10}>
           <Card title="消费分类" style={{ height: 400 }}>
-            <Pie {...pieConfig} />
+            {pieData && pieData.length > 0 ? (
+              <Pie {...pieConfig} />
+            ) : (
+              <Empty description="暂无分类数据" />
+            )}
           </Card>
         </Col>
       </Row>
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24}>
-          <Alert
-            message="智能提醒"
-            description="根据您的消费记录，建议关注餐饮和购物类别的支出，合理控制预算。"
-            type="info"
-            showIcon
-            closable
-          />
+          {hasData ? (
+            <Alert
+              message="智能提醒"
+              description="根据您的消费记录，建议关注餐饮和购物类别的支出，合理控制预算。"
+              type="info"
+              showIcon
+              closable
+            />
+          ) : (
+            <Alert
+              message="暂无数据"
+              description="还没有可用的消费数据，去账单管理上传发票或添加账单吧。"
+              type="warning"
+              showIcon
+            />
+          )}
         </Col>
       </Row>
     </div>

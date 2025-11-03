@@ -20,7 +20,7 @@
     "@types/react-dom": "^18.2.17"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host --port 3000 --strictPort",
     "build": "vite build",
     "preview": "vite preview"
   }

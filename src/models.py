@@ -1,8 +1,8 @@
 """
 数据模型定义
 """
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, JSON
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, JSON, ForeignKey, Index, UniqueConstraint
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 from datetime import datetime
 
@@ -13,7 +13,7 @@ class Bill(Base):
     __tablename__ = "bills"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False, default=1)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, default=1)
     consume_time = Column(DateTime, nullable=False)
     amount = Column(Float, nullable=False)
     merchant = Column(String(255), nullable=False)
@@ -29,7 +29,7 @@ class Invoice(Base):
     __tablename__ = "invoices"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False, default=1)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, default=1)
     invoice_time = Column(DateTime, nullable=False)
     amount = Column(Float, nullable=False)
     merchant = Column(String(255), nullable=False)
@@ -69,7 +69,7 @@ class UserProfile(Base):
     __tablename__ = "user_profiles"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     income_level = Column(String(20))
     spending_pattern = Column(JSON)  # 存储消费模式JSON
     risk_tolerance = Column(String(20))
@@ -82,7 +82,7 @@ class UserBudget(Base):
     __tablename__ = "user_budgets"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     category = Column(String(50))
     monthly_budget = Column(Float, nullable=False)
     current_spent = Column(Float, default=0.0)
@@ -95,7 +95,7 @@ class UserSubscription(Base):
     __tablename__ = "user_subscriptions"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     subscription_type = Column(String(50), default="free")  # free/premium
     start_date = Column(DateTime, nullable=False)
     end_date = Column(DateTime)
@@ -108,7 +108,7 @@ class OCRUsageQuota(Base):
     __tablename__ = "ocr_usage_quota"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     used_at = Column(DateTime, nullable=False)
     count = Column(Integer, default=0)
     created_at = Column(DateTime, default=func.now())
@@ -118,11 +118,11 @@ class CommunityPost(Base):
     __tablename__ = "community_posts"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)
-    bill_id = Column(Integer)  # 关联的账单ID
-    invoice_id = Column(Integer)  # 关联的发票ID
+    bill_id = Column(Integer, ForeignKey("bills.id", ondelete="SET NULL"))  # 关联的账单ID
+    invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"))  # 关联的发票ID
     likes_count = Column(Integer, default=0)
     comments_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=func.now())
@@ -133,8 +133,8 @@ class PostComment(Base):
     __tablename__ = "post_comments"
     
     id = Column(Integer, primary_key=True, index=True)
-    post_id = Column(Integer, nullable=False)
-    user_id = Column(Integer, nullable=False)
+    post_id = Column(Integer, ForeignKey("community_posts.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -144,6 +144,15 @@ class PostLike(Base):
     __tablename__ = "post_likes"
     
     id = Column(Integer, primary_key=True, index=True)
-    post_id = Column(Integer, nullable=False)
-    user_id = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=func.now())
+    post_id = Column(Integer, ForeignKey("community_posts.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+# 高频查询索引与唯一约束
+Index("ix_bills_user_time", Bill.user_id, Bill.consume_time)
+Index("ix_bills_category", Bill.category)
+Index("ix_bills_merchant", Bill.merchant)
+Index("ix_bills_payment_method", Bill.payment_method)
+Index("ix_posts_created_at", CommunityPost.created_at)
+UniqueConstraint(PostLike.post_id, PostLike.user_id, name="uq_post_likes_post_user")
+UniqueConstraint(UserBudget.user_id, UserBudget.category, name="uq_user_budget_user_category")
+ 
