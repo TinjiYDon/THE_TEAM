@@ -4,6 +4,7 @@ import { PlusOutlined, UploadOutlined, SearchOutlined, EyeOutlined, DeleteOutlin
 import api from '../utils/api'
 import dayjs from 'dayjs'
 import { FixedSizeList as List } from 'react-window'
+import { getCurrentUserId } from '../utils/session'
 
 const { RangePicker } = DatePicker
 
@@ -44,7 +45,7 @@ function Bills() {
       const params = {
         limit: pagination.pageSize,
         offset: (pagination.current - 1) * pagination.pageSize,
-        user_id: 1,
+        user_id: getCurrentUserId(),
       }
       
       // 添加筛选参数

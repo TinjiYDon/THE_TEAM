@@ -21,7 +21,7 @@ from .cost_analysis import cost_analyzer
 from .ai_services import user_profiler, recommendation_engine, intelligent_analyzer
 from .invoice_ocr import invoice_ocr_processor
 from .data_cleaning import data_cleaner
-from .config import HOST, PORT, API_V1_PREFIX
+from .config import HOST, PORT, API_V1_PREFIX, INSIGHT_DEFAULTS, ADMIN_CONFIG
 import sqlite3
 
 # 创建FastAPI应用
@@ -83,7 +83,8 @@ async def startup_event():
     print("数据库初始化完成")
     # 确保 OCR 日用量表存在
     try:
-        conn = sqlite3.connect(str((__import__('pathlib').Path(__file__).parent.parent / 'data' / 'bill_db.sqlite')))
+        db_path = str((__import__('pathlib').Path(__file__).parent.parent / 'data' / 'bill_db.sqlite'))
+        conn = sqlite3.connect(db_path)
         cur = conn.cursor()
         cur.execute("""
         CREATE TABLE IF NOT EXISTS ocr_usage (
@@ -94,6 +95,68 @@ async def startup_event():
             UNIQUE(user_id, used_at)
         )
         """)
+        # 社群表
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            level TEXT DEFAULT 'city', -- province/city/district
+            province TEXT,
+            city TEXT,
+            district TEXT,
+            type TEXT, -- catering/finance/...
+            cover_url TEXT,
+            description TEXT,
+            is_public INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        # 成员表
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS group_members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            role TEXT DEFAULT 'member',
+            joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(group_id, user_id)
+        )
+        """)
+        # 建群申请表
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS group_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            requester_user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            level TEXT DEFAULT 'city',
+            province TEXT,
+            city TEXT,
+            district TEXT,
+            type TEXT,
+            description TEXT,
+            status TEXT DEFAULT 'pending', -- pending/approved/rejected
+            reviewed_by INTEGER,
+            reviewed_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        # 给帖子表补充可选字段（若不存在）
+        try:
+            cur.execute("ALTER TABLE community_posts ADD COLUMN group_id INTEGER")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE community_posts ADD COLUMN visibility TEXT DEFAULT 'public'")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE community_posts ADD COLUMN attached_bill_id INTEGER")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE community_posts ADD COLUMN location_city TEXT")
+        except Exception:
+            pass
         conn.commit()
         conn.close()
     except Exception as _:
@@ -903,39 +966,40 @@ class PostCreate(BaseModel):
     invoice_id: Optional[int] = None
 
 @app.post(f"{API_V1_PREFIX}/community/posts")
-async def create_post(post: PostCreate, user_id: int = 1):
-    """创建社区帖子"""
+async def create_post(post: PostCreate, user_id: int = 1, visibility: str = 'public', group_id: int = None, attached_bill_id: int = None, city: str = None):
+    """创建社区帖子（支持可见范围/群组/附带账单）"""
     try:
-        post_data = {
-            'user_id': user_id,
-            'title': post.title.strip(),
-            'content': post.content.strip(),
-            'bill_id': post.bill_id,
-            'invoice_id': post.invoice_id
-        }
-        
-        # 验证数据
-        if not post_data['title']:
+        title = (post.title or '').strip()
+        content = (post.content or '').strip()
+        if not title:
             raise HTTPException(status_code=400, detail="标题不能为空")
-        if not post_data['content']:
+        if not content:
             raise HTTPException(status_code=400, detail="内容不能为空")
-        
-        post_obj = db_manager.create_post(post_data)
-        return {
-            "success": True,
-            "message": "帖子发布成功",
-            "data": {
-                "id": post_obj.id,
-                "user_id": post_obj.user_id,
-                "title": post_obj.title,
-                "content": post_obj.content,
-                "bill_id": post_obj.bill_id,
-                "invoice_id": post_obj.invoice_id,
-                "likes_count": post_obj.likes_count or 0,
-                "comments_count": post_obj.comments_count or 0,
-                "created_at": post_obj.created_at.isoformat() if hasattr(post_obj.created_at, 'isoformat') else str(post_obj.created_at)
-            }
-        }
+
+        from .config import DATABASE_PATH
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO community_posts(user_id, title, content, bill_id, invoice_id, group_id, visibility, attached_bill_id, location_city, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?, datetime('now'))
+            """,
+            (
+                user_id,
+                title,
+                content,
+                post.bill_id,
+                post.invoice_id,
+                group_id,
+                visibility,
+                attached_bill_id,
+                city,
+            )
+        )
+        new_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return {"success": True, "message": "帖子发布成功", "data": {"id": new_id}}
     except HTTPException:
         raise
     except Exception as e:
@@ -985,6 +1049,265 @@ async def get_posts(limit: int = 20, offset: int = 0):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"获取帖子失败: {str(e)}")
+
+# 群组与社群相关API
+@app.get(f"{API_V1_PREFIX}/groups")
+async def list_groups(city: str = None, type: str = None, level: str = None, q: str = None, limit: int = 20, offset: int = 0):
+    try:
+        from .config import DATABASE_PATH
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        where = []
+        params = []
+        if city:
+            where.append("city = ?")
+            params.append(city)
+        if type:
+            where.append("type = ?")
+            params.append(type)
+        if level:
+            where.append("level = ?")
+            params.append(level)
+        if q:
+            where.append("name LIKE ?")
+            params.append(f"%{q}%")
+        wc = (" WHERE " + " AND ".join(where)) if where else ""
+        cur.execute(f"SELECT id, name, level, province, city, district, type, cover_url, description FROM groups{wc} ORDER BY id DESC LIMIT ? OFFSET ?", params + [limit, offset])
+        rows = cur.fetchall()
+        # 成员数
+        ids = [r['id'] for r in rows]
+        member_counts = {}
+        if ids:
+            placeholders = ",".join(['?']*len(ids))
+            cur.execute(f"SELECT group_id, COUNT(*) AS cnt FROM group_members WHERE group_id IN ({placeholders}) GROUP BY group_id", ids)
+            for r in cur.fetchall():
+                member_counts[r[0]] = r[1]
+        conn.close()
+        data = []
+        for r in rows:
+            data.append({
+                'id': r['id'], 'name': r['name'], 'level': r['level'], 'province': r['province'], 'city': r['city'], 'district': r['district'],
+                'type': r['type'], 'cover_url': r['cover_url'], 'description': r['description'], 'members': member_counts.get(r['id'], 0)
+            })
+        return {'success': True, 'data': data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"群组列表失败: {str(e)}")
+
+@app.get(f"{API_V1_PREFIX}/groups/{{group_id}}")
+async def group_detail(group_id: int, user_id: int = 1):
+    try:
+        from .config import DATABASE_PATH
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM groups WHERE id=?", (group_id,))
+        g = cur.fetchone()
+        if not g:
+            conn.close()
+            raise HTTPException(status_code=404, detail="群不存在")
+        cur.execute("SELECT COUNT(*) FROM group_members WHERE group_id=?", (group_id,))
+        members = cur.fetchone()[0]
+        cur.execute("SELECT 1 FROM group_members WHERE group_id=? AND user_id=?", (group_id, user_id))
+        joined = cur.fetchone() is not None
+        conn.close()
+        return {'success': True, 'data': {
+            'id': g['id'], 'name': g['name'], 'level': g['level'], 'province': g['province'], 'city': g['city'], 'district': g['district'],
+            'type': g['type'], 'cover_url': g['cover_url'], 'description': g['description'], 'members': members, 'joined': joined
+        }}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"群详情失败: {str(e)}")
+
+@app.post(f"{API_V1_PREFIX}/groups/{{group_id}}/join")
+async def group_join(group_id: int, user_id: int = 1):
+    try:
+        from .config import DATABASE_PATH
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        cur = conn.cursor()
+        try:
+            cur.execute("INSERT OR IGNORE INTO group_members(group_id, user_id) VALUES(?,?)", (group_id, user_id))
+            conn.commit()
+        finally:
+            conn.close()
+        return {'success': True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"加入失败: {str(e)}")
+
+@app.post(f"{API_V1_PREFIX}/groups/{{group_id}}/leave")
+async def group_leave(group_id: int, user_id: int = 1):
+    try:
+        from .config import DATABASE_PATH
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        cur = conn.cursor()
+        cur.execute("DELETE FROM group_members WHERE group_id=? AND user_id=?", (group_id, user_id))
+        conn.commit()
+        conn.close()
+        return {'success': True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"退出失败: {str(e)}")
+
+@app.get(f"{API_V1_PREFIX}/groups/mine")
+async def my_groups(user_id: int = 1):
+    try:
+        from .config import DATABASE_PATH
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT g.* FROM groups g
+            JOIN group_members m ON g.id = m.group_id
+            WHERE m.user_id=?
+        """, (user_id,))
+        rows = cur.fetchall()
+        conn.close()
+        return {'success': True, 'data': [{k: row[k] for k in row.keys()} for row in rows]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"我的群失败: {str(e)}")
+
+# 社区广场/我的社群信息流（含可见性/搜索）
+@app.get(f"{API_V1_PREFIX}/community/feed")
+async def community_feed(user_id: int = 1, scope: str = 'plaza', visibility: str = 'all', q: str = None, city: str = None, group_id: int = None, limit: int = 20, offset: int = 0):
+    try:
+        from .config import DATABASE_PATH
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        where = []
+        params = []
+        if scope == 'my_groups':
+            where.append("p.group_id IN (SELECT group_id FROM group_members WHERE user_id = ?)")
+            params.append(user_id)
+        if group_id:
+            where.append("p.group_id = ?")
+            params.append(group_id)
+        if q:
+            where.append("(p.title LIKE ? OR p.content LIKE ?)")
+            params.extend([f"%{q}%", f"%{q}%"])
+        # 可见性
+        if visibility != 'all':
+            if visibility == 'public':
+                where.append("COALESCE(p.visibility,'public') = 'public'")
+            elif visibility == 'same_city' and city:
+                where.append("(COALESCE(p.visibility,'public')='public' OR (p.visibility='same_city' AND COALESCE(p.location_city,'') = ?))")
+                params.append(city)
+        elif city:
+            # 默认也考虑same_city规则
+            where.append("(COALESCE(p.visibility,'public')='public' OR (p.visibility='same_city' AND COALESCE(p.location_city,'') = ?))")
+            params.append(city)
+        wc = (" WHERE " + " AND ".join(where)) if where else ""
+        cur.execute(f"""
+            SELECT p.id, p.user_id, p.title, p.content, p.group_id, p.visibility, p.attached_bill_id, p.created_at
+            FROM community_posts p
+            {wc}
+            ORDER BY datetime(COALESCE(p.created_at, '1970-01-01')) DESC
+            LIMIT ? OFFSET ?
+        """, params + [limit, offset])
+        rows = cur.fetchall()
+        data = []
+        for r in rows:
+            item = {k: r[k] for k in r.keys()}
+            # 附带账单概要
+            if r['attached_bill_id']:
+                try:
+                    cur2 = conn.cursor()
+                    cur2.execute("SELECT id, consume_time, amount, merchant, category FROM bills WHERE id=?", (r['attached_bill_id'],))
+                    b = cur2.fetchone()
+                    if b:
+                        item['bill_summary'] = {'id': b[0], 'consume_time': b[1], 'amount': b[2], 'merchant': b[3], 'category': b[4]}
+                except Exception:
+                    pass
+            data.append(item)
+        conn.close()
+        return {'success': True, 'data': data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取信息流失败: {str(e)}")
+
+# 洞察：餐饮偏好与入群建议
+@app.get(f"{API_V1_PREFIX}/insight/dining-bias")
+async def insight_dining_bias(user_id: int = 1, city: str = None, period_days: int = None, share_threshold: float = None, min_count: int = None, lead_threshold: float = None):
+    try:
+        # 使用后台默认值填充
+        period_days = period_days or INSIGHT_DEFAULTS.get('period_days', 90)
+        share_threshold = share_threshold or INSIGHT_DEFAULTS.get('dining_share_threshold', 0.35)
+        min_count = min_count or INSIGHT_DEFAULTS.get('dining_min_count', 10)
+        lead_threshold = lead_threshold or INSIGHT_DEFAULTS.get('top1_lead_threshold', 0.20)
+        bills = get_bills_simple(user_id=user_id, limit=10000)
+        from collections import defaultdict
+        from datetime import datetime, timedelta
+        cutoff = datetime.now() - timedelta(days=period_days)
+        cat_sum = defaultdict(float)
+        cat_cnt = defaultdict(int)
+        total = 0.0
+        for b in bills:
+            try:
+                t = datetime.fromisoformat(str(b.get('consume_time')).replace(' ', 'T'))
+            except Exception:
+                continue
+            if t < cutoff:
+                continue
+            c = (b.get('category') or '未知')
+            a = float(b.get('amount') or 0)
+            cat_sum[c] += a
+            cat_cnt[c] += 1
+            total += a
+        if not total:
+            return {'success': True, 'data': {'trigger': False}}
+        sorted_cats = sorted(cat_sum.items(), key=lambda x: x[1], reverse=True)
+        top1_cat, top1_val = sorted_cats[0]
+        top2_val = sorted_cats[1][1] if len(sorted_cats) > 1 else 0.0
+        share = top1_val / total if total else 0
+        lead_ok = (top1_val - top2_val) / max(top2_val, 1e-6) >= lead_threshold if top2_val > 0 else share >= lead_threshold
+        trigger = (top1_cat in ['餐饮', '餐饮/美食', '美食']) and lead_ok and (share >= share_threshold) and (cat_cnt.get(top1_cat, 0) >= min_count)
+        suggestion = None
+        if trigger:
+            city_name = city or '上海'
+            suggestion = {'group_name': f"{city_name}餐饮群", 'city': city_name, 'type': 'catering'}
+        return {'success': True, 'data': {'trigger': bool(trigger), 'top1': {'category': top1_cat, 'share': round(share,3)}, 'suggestion': suggestion}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"洞察失败: {str(e)}")
+
+# 配置读取/更新（演示用途）
+class InsightConfig(BaseModel):
+    period_days: int | None = None
+    dining_share_threshold: float | None = None
+    dining_min_count: int | None = None
+    top1_lead_threshold: float | None = None
+
+@app.get(f"{API_V1_PREFIX}/config/insight")
+async def get_insight_config():
+    return {"success": True, "data": INSIGHT_DEFAULTS}
+
+@app.post(f"{API_V1_PREFIX}/config/insight")
+async def update_insight_config(cfg: InsightConfig):
+    try:
+        if cfg.period_days is not None:
+            INSIGHT_DEFAULTS['period_days'] = int(cfg.period_days)
+        if cfg.dining_share_threshold is not None:
+            INSIGHT_DEFAULTS['dining_share_threshold'] = float(cfg.dining_share_threshold)
+        if cfg.dining_min_count is not None:
+            INSIGHT_DEFAULTS['dining_min_count'] = int(cfg.dining_min_count)
+        if cfg.top1_lead_threshold is not None:
+            INSIGHT_DEFAULTS['top1_lead_threshold'] = float(cfg.top1_lead_threshold)
+        return {"success": True, "data": INSIGHT_DEFAULTS}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"更新配置失败: {str(e)}")
+
+# 账单公开概要
+@app.get(f"{API_V1_PREFIX}/bills/{{bill_id}}/public-summary")
+async def bill_public_summary(bill_id: int):
+    try:
+        bill = get_bill_by_id(bill_id)
+        if not bill:
+            raise HTTPException(status_code=404, detail="账单不存在")
+        return {'success': True, 'data': {
+            'id': bill['id'], 'consume_time': bill['consume_time'], 'amount': bill['amount'], 'merchant': bill['merchant'], 'category': bill['category']
+        }}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取账单概要失败: {str(e)}")
 
 @app.post(f"{API_V1_PREFIX}/community/posts/{{post_id}}/like")
 async def like_post(post_id: int, user_id: int = 1):

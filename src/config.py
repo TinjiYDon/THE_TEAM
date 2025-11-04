@@ -54,6 +54,19 @@ CHART_CONFIG = {
     "interactive": True
 }
 
+# 洞察阈值（可被接口/环境覆盖）
+INSIGHT_DEFAULTS = {
+    "period_days": int(os.getenv("INSIGHT_PERIOD_DAYS", 90)),
+    "dining_share_threshold": float(os.getenv("INSIGHT_DINING_SHARE", 0.35)),
+    "dining_min_count": int(os.getenv("INSIGHT_DINING_MIN_COUNT", 10)),
+    "top1_lead_threshold": float(os.getenv("INSIGHT_TOP1_LEAD", 0.20)),
+}
+
+# 管理配置（演示）
+ADMIN_CONFIG = {
+    "auto_approve_groups": os.getenv("AUTO_APPROVE_GROUPS", "true").lower() == "true",
+}
+
 # 日志配置
 LOG_CONFIG = {
     "level": "INFO",

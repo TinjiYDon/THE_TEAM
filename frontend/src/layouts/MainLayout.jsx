@@ -18,12 +18,12 @@ import api from '../utils/api'
 const { Header, Sider, Content } = Layout
 
 const menuItems = [
-  { key: '/dashboard', icon: <DashboardOutlined />, label: '账单小助手' },
+  { key: '/assistant', icon: <DashboardOutlined />, label: '账单小助手' },
   { key: '/bills', icon: <FileTextOutlined />, label: '账单管理' },
-  { key: '/analysis', icon: <BarChartOutlined />, label: '消费分析' },
+  { key: '/community', icon: <TeamOutlined />, label: '社群广场' },
+  { key: '/groups', icon: <TeamOutlined />, label: '群组列表' },
   { key: '/ai-assistant', icon: <RobotOutlined />, label: 'AI助手' },
   { key: '/recommendations', icon: <GiftOutlined />, label: '金融产品推荐' },
-  { key: '/community', icon: <TeamOutlined />, label: '社区' },
   { key: '/health', icon: <HeartOutlined />, label: '健康消费' },
 ]
 
