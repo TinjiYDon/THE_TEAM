@@ -10,6 +10,7 @@ const Recommendations = lazy(() => import('./pages/Recommendations'))
 const Community = lazy(() => import('./pages/Community'))
 const Groups = lazy(() => import('./pages/Groups'))
 const Health = lazy(() => import('./pages/Health'))
+const EvalPage = lazy(() => import('./pages/Eval'))
 
 function App() {
   return (
@@ -28,6 +29,7 @@ function App() {
             <Route path="groups" element={<Groups />} />
             <Route path="groups/:id" element={<Groups />} />
             <Route path="health" element={<Health />} />
+            <Route path="eval" element={<EvalPage />} />
           </Route>
         </Routes>
       </Suspense>

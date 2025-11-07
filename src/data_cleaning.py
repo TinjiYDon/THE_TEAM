@@ -6,7 +6,10 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 import jieba
-from .config import CLEANING_CONFIG
+try:
+    from .config import CLEANING_CONFIG
+except ImportError:
+    from config import CLEANING_CONFIG
 
 class DataCleaner:
     """数据清洗器"""

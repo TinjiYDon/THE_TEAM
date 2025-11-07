@@ -13,8 +13,14 @@ import jieba.analyse
 from collections import Counter
 import json
 
-from .database import db_manager
-from .config import AI_CONFIG
+try:
+    from .database import db_manager
+except ImportError:
+    from database import db_manager
+try:
+    from .config import AI_CONFIG
+except ImportError:
+    from config import AI_CONFIG
 
 class UserProfiler:
     """用户画像生成器"""
@@ -29,7 +35,10 @@ class UserProfiler:
         # 获取用户消费数据（使用直接SQL查询避免会话问题）
         try:
             import sqlite3
-            from .config import DATABASE_PATH
+            try:
+                from .config import DATABASE_PATH
+            except ImportError:
+                from config import DATABASE_PATH
             from fix_sqlalchemy_session import get_bills_simple
             
             bills_data = get_bills_simple(user_id, limit=1000)
@@ -348,7 +357,10 @@ class RecommendationEngine:
         # 获取金融产品（使用直接SQL查询避免会话问题）
         try:
             import sqlite3
-            from .config import DATABASE_PATH
+            try:
+                from .config import DATABASE_PATH
+            except ImportError:
+                from config import DATABASE_PATH
             
             conn = sqlite3.connect(str(DATABASE_PATH))
             conn.row_factory = sqlite3.Row

@@ -45,27 +45,38 @@ function Community() {
   const checkInsight = async () => {
     try {
       const res = await api.get('/insight/dining-bias', { params: { user_id: userId, city: selectedCity } })
-      setInsight(res.data || res)
+      const insightData = res.data?.data || res.data || res
+      console.log('🍽️ Insight in Community:', insightData)
+      setInsight(insightData)
+      if (insightData?.trigger === true) {
+        setJoinModal(true)
+      }
     } catch (e) {
-      // ignore
+      console.error('加载洞察失败:', e)
     }
   }
 
   const loadGroups = async () => {
     try {
       const res = await api.get('/groups', { params: { limit: 100 } })
-      setAvailableGroups(res.data || res || [])
+      const groupsData = res.data?.data || res.data || res || []
+      console.log('🏘️ Available groups:', groupsData)
+      setAvailableGroups(Array.isArray(groupsData) ? groupsData : [])
     } catch (e) {
-      // ignore
+      console.error('加载群组列表失败:', e)
+      setAvailableGroups([])
     }
   }
 
   const loadMyGroups = async () => {
     try {
       const res = await api.get('/groups/mine', { params: { user_id: userId } })
-      setMyGroups(res.data || res || [])
+      const groupsData = res.data?.data || res.data || res || []
+      console.log('👥 My groups:', groupsData)
+      setMyGroups(Array.isArray(groupsData) ? groupsData : [])
     } catch (e) {
-      // ignore
+      console.error('加载我的群组失败:', e)
+      setMyGroups([])
     }
   }
 
@@ -185,7 +196,7 @@ function Community() {
       </div>
 
       {/* 洞察卡片 */}
-      {insight?.data?.trigger && (
+      {insight?.trigger && (
         <Alert
           type="info"
           showIcon
@@ -419,14 +430,22 @@ function Community() {
           <Button key="no" onClick={() => setJoinModal(false)}>暂不加入</Button>,
           <Button key="ok" type="primary" onClick={async () => {
             try {
-              const list = await api.get('/groups', { params: { city: selectedCity } })
-              const target = (list.data || list).find?.(g => (g.name || '').includes('餐饮'))
+              const list = await api.get('/groups', { params: { city: getCityName(selectedCity) } })
+              const groupsData = list.data?.data || list.data || list || []
+              console.log('🔍 Available groups for joining:', groupsData)
+              const target = groupsData.find?.(g => (g.name || '').includes('餐饮'))
+              console.log('🎯 Target group:', target)
               if (target?.id) {
                 await api.post(`/groups/${target.id}/join`, null, { params: { user_id: userId } })
                 message.success('已加入群组')
-                loadMyGroups()
+                await loadMyGroups()
+              } else {
+                message.warning('未找到对应的餐饮群')
               }
-            } catch {}
+            } catch (e) {
+              console.error('加入群组失败:', e)
+              message.error('加入失败')
+            }
             setJoinModal(false)
           }}>加入</Button>
         ]}

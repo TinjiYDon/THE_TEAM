@@ -11,9 +11,14 @@ from sklearn.pipeline import Pipeline
 import pickle
 import os
 
-from .database import db_manager
-from .data_cleaning import data_cleaner
-from .config import CLEANING_CONFIG
+try:
+    from .database import db_manager
+    from .data_cleaning import data_cleaner
+    from .config import CLEANING_CONFIG
+except ImportError:
+    from database import db_manager
+    from data_cleaning import data_cleaner
+    from config import CLEANING_CONFIG
 
 class InvoiceOCRProcessor:
     """发票OCR处理器"""

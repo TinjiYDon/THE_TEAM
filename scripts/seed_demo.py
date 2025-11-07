@@ -43,6 +43,20 @@ def ensure_users(conn):
     cur.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, email TEXT)")
     for uid, uname, _ in USERS:
         cur.execute("INSERT OR IGNORE INTO users(id, username, email) VALUES(?,?,?)", (uid, uname, f"{uname}@example.com"))
+    # 扩展字段：age, job
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN age INTEGER")
+    except:
+        pass
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN job TEXT")
+    except:
+        pass
+    # 填充演示年龄/职业
+    jobs = ['工程师','教师','销售','设计师','产品经理','运营','学生','医生']
+    for uid, _, _ in USERS:
+        cur.execute("UPDATE users SET age = COALESCE(age, ?), job = COALESCE(job, ?) WHERE id=?",
+                    (random.randint(22, 48), random.choice(jobs), uid))
     conn.commit()
 
 
@@ -92,9 +106,21 @@ def join_members(conn):
         c2.execute("SELECT id FROM groups WHERE name=?", (name,))
         row = c2.fetchone()
         return row[0] if row else None
+    # 群组成员映射（大幅增加，确保每个群都有成员）
     mapping = [
+        # B(102) - 订购用户，加入综合理财群
         (gid('综合理财群'), 102),
+        # D(104) - 餐饮Top1，加入上海餐饮群
         (gid('上海餐饮群'), 104),
+        # A(101) - 北京用户，加入北京餐饮群
+        (gid('北京餐饮群'), 101),
+        # C(103) - 苏州用户，加入苏州本地生活群
+        (gid('苏州本地生活群'), 103),
+        # 让一些用户也加入综合理财群（多群）
+        (gid('综合理财群'), 101),
+        (gid('综合理财群'), 104),
+        # 让一些用户也加入北京教育群
+        (gid('北京教育群'), 103),
     ]
     for g_id, u_id in mapping:
         if not g_id:
@@ -132,7 +158,8 @@ def ensure_bills(conn):
         elif uid == 103:
             cats = CATEGORIES_C
         elif uid == 104:
-            cats = ['餐饮','餐饮','餐饮','交通','其他']
+            # 餐饮Top1且领先≥20%：80%餐饮，10%交通，10%其他
+            cats = ['餐饮','餐饮','餐饮','餐饮','餐饮','餐饮','餐饮','餐饮','交通','其他']
         else:
             cats = CATEGORIES_A
         # 生成 60~120 笔
@@ -200,31 +227,50 @@ def ensure_posts(conn):
         rows = c2.fetchall()
         return [r[0] for r in rows]
     
-    # 帖子数据：不同用户在不同群组发帖
+    # 帖子数据：大幅增加帖子数量，覆盖更多场景
     posts_data = [
-        # 上海餐饮群 - D(104) 发帖
-        (104, '今晚这家太香了！', '推荐一家上海本帮菜，性价比高～', gid('上海餐饮群'), 'public', bid(104, '餐饮', 1)[0] if bid(104, '餐饮', 1) else None, '上海'),
-        (104, '周末聚餐好去处', '和朋友一起去了这家店，环境不错，菜品也很棒！', gid('上海餐饮群'), 'public', bid(104, '餐饮', 1)[0] if bid(104, '餐饮', 1) else None, '上海'),
+        # === 上海餐饮群 - D(104) 发帖 ===
+        (104, '今晚这家太香了！', '推荐一家上海本帮菜，性价比高～红烧肉入口即化！', gid('上海餐饮群'), 'public', bid(104, '餐饮', 1)[0] if bid(104, '餐饮', 1) else None, '上海'),
+        (104, '周末聚餐好去处', '和朋友一起去了这家店，环境不错，菜品也很棒！人均150', gid('上海餐饮群'), 'public', bid(104, '餐饮', 1)[0] if bid(104, '餐饮', 1) else None, '上海'),
+        (104, '早餐新发现', '今早路过一家早餐铺，生煎包真香！只要8块钱', gid('上海餐饮群'), 'public', bid(104, '餐饮', 1)[0] if bid(104, '餐饮', 1) else None, '上海'),
+        (104, '午餐推荐', '公司附近新开的面馆，味道正宗价格实惠', gid('上海餐饮群'), 'public', None, '上海'),
+        (104, '晚餐打卡', '今晚又去了那家日料，海鲜超新鲜！', gid('上海餐饮群'), 'public', None, '上海'),
         
-        # 综合理财群 - B(102) 发帖
-        (102, '理财心得分享', '最近尝试了一些理财产品，收益还不错，分享给大家', gid('综合理财群'), 'public', None, '上海'),
+        # === 综合理财群 - B(102) 发帖 ===
+        (102, '理财心得分享', '最近尝试了一些理财产品，收益还不错，年化6%左右', gid('综合理财群'), 'public', None, '上海'),
         (102, '投资建议', '建议新手先从稳健型产品开始，不要盲目追求高收益', gid('综合理财群'), 'public', None, '上海'),
+        (102, '基金定投经验', '坚持定投一年了，虽然收益不高但很稳定', gid('综合理财群'), 'public', None, '上海'),
+        (102, '消费规划心得', '分享一下我的每月消费规划，30%储蓄很重要', gid('综合理财群'), 'public', None, '上海'),
+        (102, '保险配置分享', '给家人配置了重疾险和意外险，分享一下我的经验', gid('综合理财群'), 'public', None, '上海'),
         
-        # 北京餐饮群 - 其他用户发帖（模拟）
-        (101, '北京美食推荐', '今天发现一家不错的餐厅，推荐给大家', gid('北京餐饮群'), 'same_city', bid(101, '餐饮', 1)[0] if bid(101, '餐饮', 1) else None, '北京'),
+        # === 北京餐饮群 - A(101) 发帖 ===
+        (101, '北京美食推荐', '今天发现一家不错的餐厅，烤鸭很正宗！', gid('北京餐饮群'), 'same_city', bid(101, '餐饮', 1)[0] if bid(101, '餐饮', 1) else None, '北京'),
         (101, '周末探店', '周末去了一家新开的餐厅，味道不错价格也合理', gid('北京餐饮群'), 'same_city', None, '北京'),
+        (101, '工作日午餐', '公司楼下新开了一家快餐店，15块钱吃饱', gid('北京餐饮群'), 'same_city', None, '北京'),
+        (101, '火锅推荐', '冬天就要吃火锅！推荐一家性价比超高的店', gid('北京餐饮群'), 'same_city', None, '北京'),
         
-        # 北京教育群 - C(103) 发帖（虽然是苏州用户，但可以跨城查看）
-        (103, '教育支出规划', '分享一下孩子的教育支出规划，希望能帮助到大家', gid('北京教育群'), 'public', bid(103, '教育', 1)[0] if bid(103, '教育', 1) else None, '苏州'),
+        # === 苏州本地生活群 - C(103) 发帖 ===
+        (103, '教育支出规划', '分享一下孩子的教育支出规划，每年预留3万左右', gid('苏州本地生活群'), 'public', bid(103, '教育', 1)[0] if bid(103, '教育', 1) else None, '苏州'),
+        (103, '医疗保健经验', '定期体检很重要，分享一下我的体检套餐选择', gid('苏州本地生活群'), 'public', None, '苏州'),
+        (103, '苏州周边游', '周末带家人去周边玩，花费不多景色很美', gid('苏州本地生活群'), 'same_city', None, '苏州'),
         
-        # 广场帖子（不指定群组）
-        (104, '分享今日消费', '今天消费有点多，大家有什么省钱建议吗？', None, 'public', bid(104, None, 1)[0] if bid(104, None, 1) else None, '上海'),
-        (102, '购物心得', '双十一购物分享，哪些值得买哪些不值得', None, 'public', bid(102, '购物', 1)[0] if bid(102, '购物', 1) else None, '上海'),
+        # === 广场帖子（不指定群组，公开可见） ===
+        (104, '分享今日消费', '今天消费有点多，吃了顿大餐120块，大家有什么省钱建议吗？', None, 'public', bid(104, None, 1)[0] if bid(104, None, 1) else None, '上海'),
+        (104, '消费反思', '这个月餐饮支出超标了，下个月要控制一下', None, 'public', None, '上海'),
+        (102, '购物心得', '双十一购物分享，买了很多东西但其实有些不需要', None, 'public', bid(102, '购物', 1)[0] if bid(102, '购物', 1) else None, '上海'),
+        (102, '理性消费建议', '冲动消费是大忌，建议大家列购物清单', None, 'public', None, '上海'),
         (103, '医疗支出记录', '记录一下本月的医疗支出，提醒大家注意健康', None, 'public', bid(103, '医疗', 1)[0] if bid(103, '医疗', 1) else None, '苏州'),
+        (103, '家庭开支管理', '分享一下我的家庭开支管理经验', None, 'public', None, '苏州'),
+        (101, '通勤成本优化', '每月通勤费用400+，有什么省钱办法吗', None, 'public', bid(101, '交通', 1)[0] if bid(101, '交通', 1) else None, '北京'),
+        (101, '生活技巧分享', '分享一些生活小技巧，帮助大家节省开支', None, 'public', None, '北京'),
         
-        # 同城可见帖子
-        (101, '北京交通出行', '分享北京出行经验，希望能帮助到同城的朋友', None, 'same_city', bid(101, '交通', 1)[0] if bid(101, '交通', 1) else None, '北京'),
-        (104, '上海本地推荐', '上海本地人推荐的好去处，仅同城可见', None, 'same_city', None, '上海'),
+        # === 同城可见帖子（更多） ===
+        (101, '北京交通出行', '分享北京出行经验，地铁+共享单车组合最划算', None, 'same_city', bid(101, '交通', 1)[0] if bid(101, '交通', 1) else None, '北京'),
+        (101, '北京美食地图', '整理了一份北京美食地图，同城的朋友可以参考', None, 'same_city', None, '北京'),
+        (104, '上海本地推荐', '上海本地人推荐的好去处，仅同城可见哦', None, 'same_city', None, '上海'),
+        (104, '上海地铁攻略', '上海地铁出行省钱攻略，同城必看', None, 'same_city', None, '上海'),
+        (102, '上海购物中心', '推荐几个上海性价比高的购物中心', None, 'same_city', None, '上海'),
+        (103, '苏州生活指南', '苏州新人生活指南，衣食住行全攻略', None, 'same_city', None, '苏州'),
     ]
     
     # 插入帖子
@@ -245,6 +291,79 @@ def ensure_posts(conn):
     conn.commit()
 
 
+def ensure_indexes(conn):
+    cur = conn.cursor()
+    # bills 常用查询索引
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_bills_user_time ON bills(user_id, consume_time)")
+    except:
+        pass
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_bills_category ON bills(category)")
+    except:
+        pass
+    # groups 与 members 索引
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_groups_city_type ON groups(city, type)")
+    except:
+        pass
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_group_members_gid_uid ON group_members(group_id, user_id)")
+    except:
+        pass
+    # community_posts 常用筛选
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_posts_group ON community_posts(group_id)")
+    except:
+        pass
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_posts_visibility ON community_posts(visibility)")
+    except:
+        pass
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_posts_city ON community_posts(location_city)")
+    except:
+        pass
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_posts_created ON community_posts(created_at)")
+    except:
+        pass
+    conn.commit()
+
+
+def ensure_truth_labels(conn):
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS eval_truth (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            label_type TEXT NOT NULL,
+            value TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    # 基于 user 104 的月度聚合，取均值+2σ以上的月份作为异常
+    c2 = conn.cursor()
+    c2.execute("SELECT consume_time, amount FROM bills WHERE user_id=104")
+    monthly = {}
+    for ts, amt in c2.fetchall():
+        m = (ts or '')[:7]
+        if not m:
+            continue
+        monthly[m] = monthly.get(m, 0.0) + float(amt or 0)
+    vals = list(monthly.values())
+    if vals:
+        mean = sum(vals)/len(vals)
+        var = sum((v-mean)**2 for v in vals)/len(vals)
+        std = var ** 0.5
+        thr = mean + 2*std
+        anomalies = [k for k,v in monthly.items() if v > thr]
+        cur.execute("DELETE FROM eval_truth WHERE user_id=104 AND label_type='monthly_anomaly'")
+        if anomalies:
+            cur.execute("INSERT INTO eval_truth(user_id, label_type, value) VALUES(?,?,?)", (104, 'monthly_anomaly', ','.join(sorted(anomalies))))
+    conn.commit()
+
+
 def main():
     os.makedirs(Path(DB_PATH).parent, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -253,6 +372,8 @@ def main():
     join_members(conn)
     ensure_bills(conn)
     ensure_posts(conn)
+    ensure_indexes(conn)
+    ensure_truth_labels(conn)
     conn.close()
     print('Demo data seeded.')
 

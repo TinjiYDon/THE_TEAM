@@ -3,7 +3,8 @@ import { Table, Button, Space, Tag, Input, Select, DatePicker, Upload, message, 
 import { PlusOutlined, UploadOutlined, SearchOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons'
 import api from '../utils/api'
 import dayjs from 'dayjs'
-import { FixedSizeList as List } from 'react-window'
+// 暂时移除react-window虚拟滚动，使用普通渲染
+// import { FixedSizeList } from 'react-window'
 import { getCurrentUserId } from '../utils/session'
 
 const { RangePicker } = DatePicker
@@ -403,45 +404,35 @@ function Bills() {
       </div>
 
       {cardView ? (
-        <List
-          height={600}
-          itemCount={bills.length}
-          itemSize={120}
-          width={'100%'}
-          style={{ background: 'transparent' }}
-        >
-          {({ index, style }) => {
-            const b = bills[index]
-            if (!b) return null
-            return (
-              <div style={{ ...style, padding: '0 0 12px 0' }} key={b.id}>
-                <Card>
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <strong>{b.merchant}</strong>
-                      <span style={{ color: '#E02020', fontWeight: 600 }}>¥{parseFloat(b.amount).toFixed(2)}</span>
-                    </div>
-                    <div style={{ color: '#999' }}>{dayjs(b.consume_time).format('YYYY-MM-DD HH:mm')}</div>
-                    <div>
-                      <Tag color="blue" style={{ marginRight: 8 }}>{b.category}</Tag>
-                      <span>{b.payment_method}</span>
-                    </div>
-                    <Space>
-                      <Button size="small" onClick={() => handleViewBill(b.id)} icon={<EyeOutlined />}>查看</Button>
-                      <Button size="small" danger onClick={() => {
-                        Modal.confirm({
-                          title: '确认删除',
-                          content: '确定要删除这条账单记录吗？',
-                          onOk: () => handleDeleteBill(b.id),
-                        })
-                      }} icon={<DeleteOutlined />}>删除</Button>
-                    </Space>
+        <div style={{ maxHeight: 600, overflowY: 'auto' }}>
+          {bills.map(b => (
+            <div style={{ padding: '0 0 12px 0' }} key={b.id}>
+              <Card>
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <strong>{b.merchant}</strong>
+                    <span style={{ color: '#E02020', fontWeight: 600 }}>¥{parseFloat(b.amount).toFixed(2)}</span>
+                  </div>
+                  <div style={{ color: '#999' }}>{dayjs(b.consume_time).format('YYYY-MM-DD HH:mm')}</div>
+                  <div>
+                    <Tag color="blue" style={{ marginRight: 8 }}>{b.category}</Tag>
+                    <span>{b.payment_method}</span>
+                  </div>
+                  <Space>
+                    <Button size="small" onClick={() => handleViewBill(b.id)} icon={<EyeOutlined />}>查看</Button>
+                    <Button size="small" danger onClick={() => {
+                      Modal.confirm({
+                        title: '确认删除',
+                        content: '确定要删除这条账单记录吗？',
+                        onOk: () => handleDeleteBill(b.id),
+                      })
+                    }} icon={<DeleteOutlined />}>删除</Button>
                   </Space>
-                </Card>
-              </div>
-            )
-          }}
-        </List>
+                </Space>
+              </Card>
+            </div>
+          ))}
+        </div>
       ) : (
         <Table
           className="bills-table"

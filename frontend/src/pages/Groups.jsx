@@ -26,13 +26,16 @@ function Groups() {
     setLoading(true)
     try {
       const params = {
-        city: selectedCity || undefined,
+        city: selectedCity ? getCityName(selectedCity) : undefined,
         type: selectedType || undefined,
         q: searchQuery || undefined,
         limit: 50,
       }
+      console.log('📡 Groups API params:', params)
       const res = await api.get('/groups', { params })
-      setGroups(res.data || res || [])
+      const groupsData = res.data?.data || res.data || res || []
+      console.log('🏘️ Groups page - loaded groups:', groupsData)
+      setGroups(Array.isArray(groupsData) ? groupsData : [])
     } catch (error) {
       console.error('加载群组失败:', error)
       setGroups([])
@@ -178,8 +181,11 @@ export function GroupDetail() {
     setLoading(true)
     try {
       const res = await api.get(`/groups/${id}`, { params: { user_id: userId } })
-      setGroup(res.data || res)
+      const groupData = res.data?.data || res.data || res
+      console.log('🏘️ Group detail:', groupData)
+      setGroup(groupData)
     } catch (error) {
+      console.error('加载群组详情失败:', error)
       message.error('加载群组详情失败')
     } finally {
       setLoading(false)
@@ -191,9 +197,11 @@ export function GroupDetail() {
       const res = await api.get('/community/feed', {
         params: { user_id: userId, group_id: id, limit: 20 }
       })
-      setPosts(res.data || res || [])
+      const postsData = res.data?.data || res.data || res || []
+      console.log('📝 Group posts:', postsData)
+      setPosts(Array.isArray(postsData) ? postsData : [])
     } catch (e) {
-      // ignore
+      console.error('加载群组帖子失败:', e)
     }
   }
 

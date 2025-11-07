@@ -10,9 +10,18 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
-from .database import db_manager
-from .data_cleaning import data_cleaner
-from .config import CLEANING_CONFIG
+try:
+    from .database import db_manager
+except ImportError:
+    from database import db_manager
+try:
+    from .data_cleaning import data_cleaner
+except ImportError:
+    from data_cleaning import data_cleaner
+try:
+    from .config import CLEANING_CONFIG
+except ImportError:
+    from config import CLEANING_CONFIG
 
 class BillQueryProcessor:
     """账单查询处理器"""

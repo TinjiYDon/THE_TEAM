@@ -11,12 +11,20 @@ import pandas as pd
 import time
 import threading
 
-from .config import DATABASE_URL, DATABASE_PATH
-from .models import (
-    Base, Bill, Invoice, User, FinancialProduct, UserProfile,
-    UserBudget, UserSubscription, OCRUsageQuota,
-    CommunityPost, PostComment, PostLike
-)
+try:
+    from .config import DATABASE_URL, DATABASE_PATH
+    from .models import (
+        Base, Bill, Invoice, User, FinancialProduct, UserProfile,
+        UserBudget, UserSubscription, OCRUsageQuota,
+        CommunityPost, PostComment, PostLike
+    )
+except ImportError:
+    from config import DATABASE_URL, DATABASE_PATH
+    from models import (
+        Base, Bill, Invoice, User, FinancialProduct, UserProfile,
+        UserBudget, UserSubscription, OCRUsageQuota,
+        CommunityPost, PostComment, PostLike
+    )
 from sqlalchemy import func
 
 # 创建数据库引擎

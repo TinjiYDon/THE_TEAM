@@ -12,16 +12,30 @@ import uvicorn
 import os
 import random
 
-# 导入自定义模块
-from .database import db_manager
+# 导入自定义模块（使用绝对导入）
+try:
+    # 尝试包内导入
+    from .database import db_manager, init_database
+    from .bill_query import query_processor
+    from .cost_analysis import cost_analyzer
+    from .ai_services import user_profiler, recommendation_engine, intelligent_analyzer
+    from .invoice_ocr import invoice_ocr_processor
+    from .data_cleaning import data_cleaner
+    try:
+        from .config import HOST, PORT, API_V1_PREFIX, INSIGHT_DEFAULTS, ADMIN_CONFIG
+    except ImportError:
+        from config import HOST, PORT, API_V1_PREFIX, INSIGHT_DEFAULTS, ADMIN_CONFIG
+except ImportError:
+    # 直接运行时使用绝对导入
+    from database import db_manager, init_database
+    from bill_query import query_processor
+    from cost_analysis import cost_analyzer
+    from ai_services import user_profiler, recommendation_engine, intelligent_analyzer
+    from invoice_ocr import invoice_ocr_processor
+    from data_cleaning import data_cleaner
+    from config import HOST, PORT, API_V1_PREFIX, INSIGHT_DEFAULTS, ADMIN_CONFIG
+
 from fix_sqlalchemy_session import get_bills_simple, get_bill_by_id, create_bill_simple, get_spending_summary_simple
-from .database import init_database
-from .bill_query import query_processor
-from .cost_analysis import cost_analyzer
-from .ai_services import user_profiler, recommendation_engine, intelligent_analyzer
-from .invoice_ocr import invoice_ocr_processor
-from .data_cleaning import data_cleaner
-from .config import HOST, PORT, API_V1_PREFIX, INSIGHT_DEFAULTS, ADMIN_CONFIG
 import sqlite3
 
 # 创建FastAPI应用
@@ -74,6 +88,14 @@ class InvoiceProcessRequest(BaseModel):
     ocr_text: str
     user_id: int = 1
     file_path: Optional[str] = None
+
+# ---------- 分析与优化（建模接口数据结构） ----------
+class BudgetOptimizeRequest(BaseModel):
+    user_id: int = 1
+    monthly_income: Optional[float] = None
+    min_saving_rate: Optional[float] = 0.1  # 至少存下10%
+    fixed_categories: Optional[Dict[str, float]] = None  # 固定最低支出，如房租/教育等
+    target_categories: Optional[List[str]] = None  # 允许优化的类别
 
 # 启动事件
 @app.on_event("startup")
@@ -155,6 +177,44 @@ async def startup_event():
             pass
         try:
             cur.execute("ALTER TABLE community_posts ADD COLUMN location_city TEXT")
+        except Exception:
+            pass
+        # 特征缓存表
+        try:
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_features (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                window_days INTEGER NOT NULL,
+                total_amount REAL,
+                avg_amount REAL,
+                category_top TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, window_days)
+            )
+            """)
+        except Exception:
+            pass
+        # 用户扩展字段（年龄、职业）
+        try:
+            cur.execute("ALTER TABLE users ADD COLUMN age INTEGER")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE users ADD COLUMN job TEXT")
+        except Exception:
+            pass
+        # 提醒表
+        try:
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                payload TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
         except Exception:
             pass
         conn.commit()
@@ -301,7 +361,10 @@ async def get_bills(
     """获取账单列表（支持搜索和筛选）"""
     try:
         import sqlite3
-        from .config import DATABASE_PATH
+        try:
+            from .config import DATABASE_PATH
+        except ImportError:
+            from config import DATABASE_PATH
         
         conn = sqlite3.connect(str(DATABASE_PATH))
         conn.row_factory = sqlite3.Row
@@ -519,6 +582,506 @@ async def get_trend_analysis(user_id: int = 1, period: str = "monthly"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取趋势分析失败: {str(e)}")
 
+# ---------- 财务健康评分 ----------
+@app.get(f"{API_V1_PREFIX}/analytics/health-score")
+async def analytics_health_score(user_id: int = 1, window_days: int = 90):
+    """计算财务健康评分（0-100）与分项：
+    - 收支平衡度、预算达标率（如有预算）、波动性（稳定度）、异常交易扣分
+    """
+    try:
+        bills = get_bills_simple(user_id=user_id, limit=10000)
+        if not bills:
+            return {"success": True, "data": {"score": 70, "details": {"balance": 0.7, "stability": 0.7, "budget": 0.7, "anomaly": 1.0}}}
+        # 近window天
+        from datetime import datetime, timedelta
+        cutoff = datetime.now() - timedelta(days=window_days)
+        tb = []
+        for b in bills:
+            try:
+                t = datetime.fromisoformat(str(b.get('consume_time')).replace(' ', 'T'))
+                if t >= cutoff:
+                    tb.append({**b, 'dt': t})
+            except Exception:
+                pass
+        if not tb:
+            tb = bills
+        amounts = [float(x.get('amount') or 0) for x in tb]
+        total = sum(amounts)
+        avg = total / max(len(amounts), 1)
+        # 稳定度：金额的变异系数反向
+        import math
+        mean = avg
+        var = sum((a-mean)**2 for a in amounts)/max(len(amounts),1)
+        std = math.sqrt(var)
+        stability = 1.0 / (1.0 + (std/(mean+1e-6)))  # 0~1 越稳越高
+        # 简化预算项（若无预算则给0.7基准）
+        budget_ratio = 0.7
+        try:
+            budgets = db_manager.get_budgets(user_id)
+            if budgets:
+                # 计算各类别使用率，越低越好
+                usage_scores = []
+                for bgt in budgets:
+                    # 统计当月该类别支出
+                    month_prefix = datetime.now().strftime('%Y-%m')
+                    cat = (bgt.category or '')
+                    used = sum(float(x.get('amount') or 0) for x in tb if str(x.get('consume_time','')).startswith(month_prefix) and (x.get('category') or '') == cat)
+                    ratio = used / max(bgt.monthly_budget or 1.0, 1.0)
+                    usage_scores.append(1.0 - min(ratio, 1.2))
+                if usage_scores:
+                    budget_ratio = max(min(sum(usage_scores)/len(usage_scores), 1.0), 0.0)
+        except Exception:
+            pass
+        # 异常扣分：均值+2σ 以上视为异常比例
+        anom_thresh = mean + 2*std
+        anomalies = [a for a in amounts if a > anom_thresh]
+        anomaly_ratio = len(anomalies)/max(len(amounts),1)
+        anomaly_score = max(1.0 - anomaly_ratio*2.0, 0.0)
+        # 收支平衡度（无收入数据，退化为月支出与历史均值相对）
+        balance = max(1.0 - (avg/(mean+1e-6) -1.0), 0.0)
+        # 综合分
+        details = {"balance": round(balance,3), "stability": round(stability,3), "budget": round(budget_ratio,3), "anomaly": round(anomaly_score,3)}
+        score = round((details['balance']*0.3 + details['stability']*0.3 + details['budget']*0.25 + details['anomaly']*0.15) * 100)
+        return {"success": True, "data": {"score": score, "details": details, "window_days": window_days}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"健康评分失败: {str(e)}")
+
+# ---------- 异常检测（解释增强） ----------
+@app.get(f"{API_V1_PREFIX}/analytics/anomaly")
+async def analytics_anomaly(user_id: int = 1, window_days: int = 90):
+    try:
+        bills = get_bills_simple(user_id=user_id, limit=10000)
+        from datetime import datetime, timedelta
+        cutoff = datetime.now() - timedelta(days=window_days)
+        tb = []
+        for b in bills:
+            try:
+                t = datetime.fromisoformat(str(b.get('consume_time')).replace(' ', 'T'))
+                if t >= cutoff:
+                    tb.append({**b, 'dt': t})
+            except Exception:
+                pass
+        amounts = [float(x.get('amount') or 0) for x in tb]
+        if not amounts:
+            return {"success": True, "data": {"anomalies": [], "threshold": None}}
+        # 纯Python计算均值与标准差，避免额外依赖
+        mean = sum(amounts)/len(amounts)
+        var = sum((a-mean)**2 for a in amounts)/len(amounts)
+        std = var ** 0.5
+        thr = mean + 2.5*std
+        anns = [x for x in tb if float(x.get('amount') or 0) > thr]
+        # 解释：类别/商家贡献
+        explain = {}
+        from collections import Counter
+        explain['top_categories'] = Counter([x.get('category') or '未知' for x in anns]).most_common(3)
+        explain['top_merchants'] = Counter([x.get('merchant') or '—' for x in anns]).most_common(3)
+        return {"success": True, "data": {"anomalies": anns[:20], "threshold": round(thr,2), "explain": explain}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"异常分析失败: {str(e)}")
+
+# ---------- 支出预测（简化统计版） ----------
+@app.get(f"{API_V1_PREFIX}/analytics/forecast")
+async def analytics_forecast(user_id: int = 1, period: str = 'month', horizon: int = 1):
+    """按月/周聚合的简单预测，先用移动平均做可演示版本"""
+    try:
+        bills = get_bills_simple(user_id=user_id, limit=20000)
+        from collections import defaultdict
+        import datetime as dt
+        series = defaultdict(float)
+        for b in bills:
+            ts = str(b.get('consume_time') or '')[:10]
+            if not ts:
+                continue
+            if period == 'week':
+                y, w, _ = dt.datetime.strptime(ts, '%Y-%m-%d').isocalendar()
+                key = f"{y}-W{w:02d}"
+            else:
+                key = ts[:7]
+            series[key] += float(b.get('amount') or 0)
+        keys = sorted(series.keys())
+        values = [series[k] for k in keys]
+        if not values:
+            return {"success": True, "data": {"history": [], "forecast": []}}
+        ma = sum(values[-min(3, len(values)):]) / min(3, len(values))
+        forecast = [round(ma,2) for _ in range(max(1, horizon))]
+        return {"success": True, "data": {"history": [{"period": k, "amount": round(series[k],2)} for k in keys[-12:]], "forecast": forecast, "method": "moving_average"}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"预测失败: {str(e)}")
+
+# ---------- 预算优化（线性规划简化版） ----------
+@app.post(f"{API_V1_PREFIX}/analytics/budget-optimize")
+async def analytics_budget_optimize(req: BudgetOptimizeRequest):
+    try:
+        user_id = req.user_id
+        bills = get_bills_simple(user_id=user_id, limit=10000)
+        from collections import defaultdict
+        cat_sum = defaultdict(float)
+        for b in bills:
+            cat_sum[b.get('category') or '其他'] += float(b.get('amount') or 0)
+        total_recent = sum(cat_sum.values())
+        target_cats = req.target_categories or list(cat_sum.keys())
+        # 目标：在不低于固定支出且满足储蓄率下，最小化总支出（演示：按比例压缩可变类）
+        fixed = req.fixed_categories or {}
+        income = req.monthly_income or max(total_recent, 3000)
+        min_saving = income * (req.min_saving_rate or 0.1)
+        budget_pool = max(income - min_saving - sum(fixed.values()), 0)
+        # 基于历史占比分配预算池
+        var_total = sum(cat_sum[c] for c in target_cats) or 1.0
+        suggestion = {}
+        for c in target_cats:
+            base = cat_sum[c]/var_total
+            suggestion[c] = round(budget_pool * base, 2)
+        # 合并固定项
+        for c, v in fixed.items():
+            suggestion[c] = round(suggestion.get(c, 0) + float(v), 2)
+        return {"success": True, "data": {"income": income, "min_saving": round(min_saving,2), "suggestion": suggestion}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"预算优化失败: {str(e)}")
+
+# ---------- 同类人群对比（退化版：按城市/类别） ----------
+@app.get(f"{API_V1_PREFIX}/analytics/cohort-compare")
+async def analytics_cohort_compare(user_id: int = 1, dim: str = 'city', window_days: int = 90):
+    """与同类人群对比：返回本人在各类别的月度均额、同维度均值、差异百分比"""
+    try:
+        import sqlite3
+        try:
+            from .config import DATABASE_PATH
+        except ImportError:
+            from config import DATABASE_PATH
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        # 找到用户城市
+        cur.execute("SELECT username FROM users WHERE id=?", (user_id,))
+        # 城市存储在 bills.location（中文名），用用户最近账单定位
+        cur.execute("SELECT COALESCE(location,'') FROM bills WHERE user_id=? ORDER BY consume_time DESC LIMIT 1", (user_id,))
+        row = cur.fetchone()
+        user_city = (row[0] if row else '')
+        # 时间范围
+        from datetime import datetime, timedelta
+        start = (datetime.now() - timedelta(days=window_days)).strftime('%Y-%m-%d')
+        # 本人按类别
+        cur.execute("""
+            SELECT category, SUM(amount) AS amt
+            FROM bills
+            WHERE user_id=? AND consume_time>=?
+            GROUP BY category
+        """, (user_id, start))
+        mine = {r['category'] or '未知': float(r['amt'] or 0) for r in cur.fetchall()}
+        # 同城均值（退化：同城所有用户平均）
+        peer = {}
+        if dim == 'city' and user_city:
+            cur.execute("""
+                SELECT category, AVG(s) FROM (
+                  SELECT user_id, category, SUM(amount) AS s
+                  FROM bills
+                  WHERE COALESCE(location,'')=? AND consume_time>=?
+                  GROUP BY user_id, category
+                ) t GROUP BY category
+            """, (user_city, start))
+            peer = {r[0] or '未知': float(r[1] or 0) for r in cur.fetchall()}
+        else:
+            # 全体均值
+            cur.execute("""
+                SELECT category, AVG(s) FROM (
+                  SELECT user_id, category, SUM(amount) AS s
+                  FROM bills
+                  WHERE consume_time>=?
+                  GROUP BY user_id, category
+                ) t GROUP BY category
+            """, (start,))
+            peer = {r[0] or '未知': float(r[1] or 0) for r in cur.fetchall()}
+        conn.close()
+        # 汇总差异
+        cats = set(mine.keys()) | set(peer.keys())
+        items = []
+        for c in cats:
+            v1 = mine.get(c, 0.0)
+            v2 = peer.get(c, 0.0)
+            diff = (v1 - v2)
+            pct = (diff / (v2 if v2 else 1.0)) if v2 else (1.0 if v1>0 else 0.0)
+            items.append({
+                'category': c,
+                'mine': round(v1,2),
+                'peer': round(v2,2),
+                'diff': round(diff,2),
+                'diff_pct': round(pct,3)
+            })
+        items.sort(key=lambda x: abs(x['diff_pct']), reverse=True)
+        return { 'success': True, 'data': { 'dimension': dim, 'city': user_city, 'window_days': window_days, 'items': items } }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"同类人群对比失败: {str(e)}")
+
+# ---------- 同类人群对比 v2（city/age/job + 分位数 + 相对暴露） ----------
+@app.get(f"{API_V1_PREFIX}/analytics/cohort-compare/v2")
+async def analytics_cohort_compare_v2(user_id: int = 1, dim: str = 'city', window_days: int = 90):
+    try:
+        import sqlite3
+        try:
+            from .config import DATABASE_PATH
+        except ImportError:
+            from config import DATABASE_PATH
+        from datetime import datetime, timedelta
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        # 用户维度值
+        if dim == 'city':
+            cur.execute("SELECT COALESCE(location,'') AS v FROM bills WHERE user_id=? ORDER BY consume_time DESC LIMIT 1", (user_id,))
+        elif dim == 'age':
+            cur.execute("SELECT age AS v FROM users WHERE id=?", (user_id,))
+        elif dim == 'job':
+            cur.execute("SELECT job AS v FROM users WHERE id=?", (user_id,))
+        else:
+            return { 'success': True, 'data': { 'items': [] } }
+        row = cur.fetchone()
+        cohort_val = (row['v'] if row else '')
+        start = (datetime.now() - timedelta(days=window_days)).strftime('%Y-%m-%d')
+        # 本人按类别聚合
+        cur.execute("""
+            SELECT category, SUM(amount) AS amt
+            FROM bills WHERE user_id=? AND consume_time>=? GROUP BY category
+        """, (user_id, start))
+        mine = {r['category'] or '未知': float(r['amt'] or 0) for r in cur.fetchall()}
+        mine_total = sum(mine.values()) or 1.0
+        # 同类每用户每类别月额，再做分位数
+        where_users = ""
+        params = [start]
+        if dim == 'city' and cohort_val:
+            where_users = "WHERE COALESCE(location,'')=?"
+            params = [cohort_val, start]
+        elif dim == 'age':
+            where_users = "WHERE u.age IS NOT NULL"
+        elif dim == 'job':
+            where_users = "WHERE u.job IS NOT NULL"
+        # 拉平同类（按用户×类别）
+        if dim in ('age','job'):
+            cur.execute(f"""
+                SELECT b.user_id, b.category, SUM(b.amount) AS s
+                FROM bills b JOIN users u ON b.user_id=u.id
+                {where_users} AND b.consume_time>=?
+                GROUP BY b.user_id, b.category
+            """, [start])
+        else:
+            cur.execute(f"""
+                SELECT user_id, category, SUM(amount) AS s
+                FROM bills
+                {('WHERE COALESCE(location,\'\')=? AND ') if (dim=='city' and cohort_val) else 'WHERE '} consume_time>=?
+                GROUP BY user_id, category
+            """, params)
+        rows = cur.fetchall()
+        # 汇总为：类别 -> [各用户金额]
+        by_cat = {}
+        totals_by_user = {}
+        for r in rows:
+            uid = r['user_id']
+            cat = r['category'] or '未知'
+            val = float(r['s'] or 0)
+            by_cat.setdefault(cat, []).append(val)
+            totals_by_user[uid] = totals_by_user.get(uid, 0.0) + val
+        # 计算分位数与同类占比（按用户归一化）
+        import math
+        items = []
+        for cat, arr in by_cat.items():
+            arr_sorted = sorted(arr)
+            def q(p):
+                if not arr_sorted:
+                    return 0.0
+                k = max(0, min(len(arr_sorted)-1, int(round((len(arr_sorted)-1)*p))))
+                return float(arr_sorted[k])
+            p50 = q(0.5)
+            p25 = q(0.25)
+            p75 = q(0.75)
+            # 近似同类占比：类别均额 / 所有类别均额之和（同类）
+            peer_mean = sum(arr) / len(arr) if arr else 0.0
+            peer_total_mean = sum(sum(vs)/len(vs) for vs in by_cat.values())
+            peer_share = (peer_mean / peer_total_mean) if peer_total_mean else 0.0
+            mine_share = (mine.get(cat, 0.0) / mine_total)
+            re = mine_share - peer_share
+            items.append({
+                'category': cat,
+                'peer_p25': round(p25,2),
+                'peer_p50': round(p50,2),
+                'peer_p75': round(p75,2),
+                'peer_share': round(peer_share,3),
+                'mine_share': round(mine_share,3),
+                'relative_exposure': round(re,3)
+            })
+        items.sort(key=lambda x: abs(x['relative_exposure']), reverse=True)
+        conn.close()
+        return { 'success': True, 'data': { 'dimension': dim, 'cohort_value': cohort_val, 'window_days': window_days, 'items': items[:12] } }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"同类比对v2失败: {str(e)}")
+
+# ---------- 行动：应用预算建议 / 设置提醒 ----------
+class ApplyBudgetRequest(BaseModel):
+    user_id: int = 1
+    suggestion: Dict[str, float]
+
+@app.post(f"{API_V1_PREFIX}/analytics/actions/apply-budget")
+async def actions_apply_budget(req: ApplyBudgetRequest):
+    try:
+        # 将建议写入/更新预算
+        for cat, val in req.suggestion.items():
+            try:
+                budgets = db_manager.get_budgets(req.user_id)
+                exists = None
+                for b in budgets:
+                    if (b.category or '') == cat:
+                        exists = b
+                        break
+                if exists:
+                    db_manager.update_budget(exists.id, { 'monthly_budget': float(val) })
+                else:
+                    db_manager.create_budget({ 'user_id': req.user_id, 'category': cat, 'monthly_budget': float(val), 'alert_threshold': 0.8 })
+            except Exception:
+                pass
+        return { 'success': True }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"应用预算失败: {str(e)}")
+
+class ReminderRequest(BaseModel):
+    user_id: int = 1
+    type: str
+    payload: Dict[str, Any] | None = None
+
+@app.post(f"{API_V1_PREFIX}/analytics/actions/set-reminder")
+async def actions_set_reminder(req: ReminderRequest):
+    try:
+        from .config import DATABASE_PATH
+        import sqlite3, json
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        cur = conn.cursor()
+        cur.execute("INSERT INTO reminders(user_id, type, payload) VALUES(?,?,?)", (req.user_id, req.type, json.dumps(req.payload or {}, ensure_ascii=False)))
+        conn.commit()
+        conn.close()
+        return { 'success': True }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"设置提醒失败: {str(e)}")
+
+# ---------- 评测：预测MAPE与异常检测回测（基于移动平均&阈值法） ----------
+@app.get(f"{API_V1_PREFIX}/analytics/eval")
+async def analytics_eval(user_id: int = 1, period: str = 'month'):
+    try:
+        bills = get_bills_simple(user_id=user_id, limit=20000)
+        from collections import defaultdict
+        import datetime as dt
+        # 聚合历史
+        series = defaultdict(float)
+        for b in bills:
+            ts = str(b.get('consume_time') or '')[:10]
+            if not ts:
+                continue
+            key = ts[:7] if period == 'month' else ts
+            series[key] += float(b.get('amount') or 0)
+        keys = sorted(series.keys())
+        vals = [series[k] for k in keys]
+        # 预测回测（滚动三月移动平均）
+        preds, actuals = [], []
+        for i in range(3, len(vals)):
+            ma = sum(vals[i-3:i]) / 3
+            preds.append(ma)
+            actuals.append(vals[i])
+        def mape(p, a):
+            if not p or not a:
+                return None
+            err = 0.0
+            n = 0
+            for pi, ai in zip(p, a):
+                if ai != 0:
+                    err += abs((ai - pi)/ai)
+                    n += 1
+            return (err/n)*100 if n else None
+        mape_val = mape(preds, actuals)
+        # 异常检测回测（静态阈值：均值+2σ）
+        if vals:
+            mean = sum(vals)/len(vals)
+            var = sum((v-mean)**2 for v in vals)/len(vals)
+            std = var ** 0.5
+            thr = mean + 2*std
+            anomalies = [k for k,v in zip(keys, vals) if v > thr]
+        else:
+            anomalies, thr = [], None
+        return { 'success': True, 'data': { 'period': period, 'mape': round(mape_val,2) if mape_val is not None else None, 'anomaly_threshold': round(thr,2) if thr is not None else None, 'anomaly_periods': anomalies[-6:], 'points': [{'period': k, 'amount': round(series[k],2)} for k in keys[-12:]] } }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"评测失败: {str(e)}")
+
+# ---------- 特征缓存：刷新与读取 ----------
+@app.post(f"{API_V1_PREFIX}/analytics/features/refresh")
+async def analytics_features_refresh(user_id: int = 1):
+    try:
+        from .config import DATABASE_PATH
+        import sqlite3
+        from collections import defaultdict
+        from datetime import datetime, timedelta
+        bills = get_bills_simple(user_id=user_id, limit=20000)
+        windows = [7, 30, 90]
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        cur = conn.cursor()
+        for w in windows:
+            cutoff = datetime.now() - timedelta(days=w)
+            arr = []
+            for b in bills:
+                try:
+                    t = datetime.fromisoformat(str(b.get('consume_time')).replace(' ', 'T'))
+                    if t >= cutoff:
+                        arr.append(b)
+                except Exception:
+                    pass
+            total = sum(float(x.get('amount') or 0) for x in arr)
+            avg = total / max(len(arr),1)
+            by_cat = defaultdict(float)
+            for x in arr:
+                by_cat[x.get('category') or '未知'] += float(x.get('amount') or 0)
+            top = sorted(by_cat.items(), key=lambda x: x[1], reverse=True)[:5]
+            import json
+            cur.execute(
+                """
+                INSERT INTO user_features(user_id, window_days, total_amount, avg_amount, category_top, updated_at)
+                VALUES(?,?,?,?,?, datetime('now'))
+                ON CONFLICT(user_id, window_days) DO UPDATE SET
+                  total_amount=excluded.total_amount,
+                  avg_amount=excluded.avg_amount,
+                  category_top=excluded.category_top,
+                  updated_at=excluded.updated_at
+                """,
+                (user_id, w, total, avg, json.dumps(top, ensure_ascii=False))
+            )
+        conn.commit()
+        conn.close()
+        return { 'success': True }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"特征刷新失败: {str(e)}")
+
+@app.get(f"{API_V1_PREFIX}/analytics/features")
+async def analytics_features(user_id: int = 1):
+    try:
+        from .config import DATABASE_PATH
+        import sqlite3, json
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT user_id, window_days, total_amount, avg_amount, category_top, updated_at FROM user_features WHERE user_id=? ORDER BY window_days", (user_id,))
+        rows = cur.fetchall()
+        conn.close()
+        data = []
+        for r in rows:
+            try:
+                top = json.loads(r['category_top'] or '[]')
+            except Exception:
+                top = []
+            data.append({
+                'user_id': r['user_id'],
+                'window_days': r['window_days'],
+                'total_amount': r['total_amount'],
+                'avg_amount': r['avg_amount'],
+                'category_top': top,
+                'updated_at': r['updated_at']
+            })
+        return { 'success': True, 'data': data }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取特征失败: {str(e)}")
+
 # AI服务API
 @app.get(f"{API_V1_PREFIX}/ai/profile/{{user_id}}")
 async def get_user_profile(user_id: int):
@@ -655,7 +1218,10 @@ async def upload_invoice_image(file: UploadFile = File(...), user_id: int = 1):
         except Exception as _:
             pass
         # 保存上传文件
-        from .config import UPLOADS_DIR
+        try:
+            from .config import UPLOADS_DIR
+        except ImportError:
+            from config import UPLOADS_DIR
         os.makedirs(UPLOADS_DIR, exist_ok=True)
         save_path = os.path.join(str(UPLOADS_DIR), file.filename)
         with open(save_path, "wb") as f:
@@ -976,7 +1542,10 @@ async def create_post(post: PostCreate, user_id: int = 1, visibility: str = 'pub
         if not content:
             raise HTTPException(status_code=400, detail="内容不能为空")
 
-        from .config import DATABASE_PATH
+        try:
+            from .config import DATABASE_PATH
+        except ImportError:
+            from config import DATABASE_PATH
         conn = sqlite3.connect(str(DATABASE_PATH))
         cur = conn.cursor()
         cur.execute(
@@ -1013,7 +1582,10 @@ async def get_posts(limit: int = 20, offset: int = 0):
     try:
         # 直接使用SQL查询避免SQLAlchemy会话问题
         import sqlite3
-        from .config import DATABASE_PATH
+        try:
+            from .config import DATABASE_PATH
+        except ImportError:
+            from config import DATABASE_PATH
         
         conn = sqlite3.connect(str(DATABASE_PATH))
         conn.row_factory = sqlite3.Row
@@ -1054,7 +1626,10 @@ async def get_posts(limit: int = 20, offset: int = 0):
 @app.get(f"{API_V1_PREFIX}/groups")
 async def list_groups(city: str = None, type: str = None, level: str = None, q: str = None, limit: int = 20, offset: int = 0):
     try:
-        from .config import DATABASE_PATH
+        try:
+            from .config import DATABASE_PATH
+        except ImportError:
+            from config import DATABASE_PATH
         conn = sqlite3.connect(str(DATABASE_PATH))
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
@@ -1082,7 +1657,7 @@ async def list_groups(city: str = None, type: str = None, level: str = None, q: 
             placeholders = ",".join(['?']*len(ids))
             cur.execute(f"SELECT group_id, COUNT(*) AS cnt FROM group_members WHERE group_id IN ({placeholders}) GROUP BY group_id", ids)
             for r in cur.fetchall():
-                member_counts[r[0]] = r[1]
+                member_counts[r['group_id']] = r['cnt']
         conn.close()
         data = []
         for r in rows:
@@ -1094,10 +1669,35 @@ async def list_groups(city: str = None, type: str = None, level: str = None, q: 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"群组列表失败: {str(e)}")
 
+# 注意：/groups/mine 必须在 /groups/{group_id} 之前，否则"mine"会被当作group_id
+@app.get(f"{API_V1_PREFIX}/groups/mine")
+async def my_groups(user_id: int = 1):
+    try:
+        try:
+            from .config import DATABASE_PATH
+        except ImportError:
+            from config import DATABASE_PATH
+        conn = sqlite3.connect(str(DATABASE_PATH))
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT g.* FROM groups g
+            JOIN group_members m ON g.id = m.group_id
+            WHERE m.user_id=?
+        """, (user_id,))
+        rows = cur.fetchall()
+        conn.close()
+        return {'success': True, 'data': [{k: row[k] for k in row.keys()} for row in rows]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"我的群失败: {str(e)}")
+
 @app.get(f"{API_V1_PREFIX}/groups/{{group_id}}")
 async def group_detail(group_id: int, user_id: int = 1):
     try:
-        from .config import DATABASE_PATH
+        try:
+            from .config import DATABASE_PATH
+        except ImportError:
+            from config import DATABASE_PATH
         conn = sqlite3.connect(str(DATABASE_PATH))
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
@@ -1123,7 +1723,10 @@ async def group_detail(group_id: int, user_id: int = 1):
 @app.post(f"{API_V1_PREFIX}/groups/{{group_id}}/join")
 async def group_join(group_id: int, user_id: int = 1):
     try:
-        from .config import DATABASE_PATH
+        try:
+            from .config import DATABASE_PATH
+        except ImportError:
+            from config import DATABASE_PATH
         conn = sqlite3.connect(str(DATABASE_PATH))
         cur = conn.cursor()
         try:
@@ -1138,7 +1741,10 @@ async def group_join(group_id: int, user_id: int = 1):
 @app.post(f"{API_V1_PREFIX}/groups/{{group_id}}/leave")
 async def group_leave(group_id: int, user_id: int = 1):
     try:
-        from .config import DATABASE_PATH
+        try:
+            from .config import DATABASE_PATH
+        except ImportError:
+            from config import DATABASE_PATH
         conn = sqlite3.connect(str(DATABASE_PATH))
         cur = conn.cursor()
         cur.execute("DELETE FROM group_members WHERE group_id=? AND user_id=?", (group_id, user_id))
@@ -1148,29 +1754,14 @@ async def group_leave(group_id: int, user_id: int = 1):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"退出失败: {str(e)}")
 
-@app.get(f"{API_V1_PREFIX}/groups/mine")
-async def my_groups(user_id: int = 1):
-    try:
-        from .config import DATABASE_PATH
-        conn = sqlite3.connect(str(DATABASE_PATH))
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT g.* FROM groups g
-            JOIN group_members m ON g.id = m.group_id
-            WHERE m.user_id=?
-        """, (user_id,))
-        rows = cur.fetchall()
-        conn.close()
-        return {'success': True, 'data': [{k: row[k] for k in row.keys()} for row in rows]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"我的群失败: {str(e)}")
-
 # 社区广场/我的社群信息流（含可见性/搜索）
 @app.get(f"{API_V1_PREFIX}/community/feed")
 async def community_feed(user_id: int = 1, scope: str = 'plaza', visibility: str = 'all', q: str = None, city: str = None, group_id: int = None, limit: int = 20, offset: int = 0):
     try:
-        from .config import DATABASE_PATH
+        try:
+            from .config import DATABASE_PATH
+        except ImportError:
+            from config import DATABASE_PATH
         conn = sqlite3.connect(str(DATABASE_PATH))
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
@@ -1346,7 +1937,10 @@ async def login(request: LoginRequest):
     try:
         import hashlib
         import sqlite3
-        from .config import DATABASE_PATH
+        try:
+            from .config import DATABASE_PATH
+        except ImportError:
+            from config import DATABASE_PATH
         
         # 从数据库验证用户（简化版：检查用户名是否存在）
         conn = sqlite3.connect(str(DATABASE_PATH))
@@ -1514,7 +2108,10 @@ async def get_enhanced_financial_recommendations(user_id: int):
         if len(recs) < 10:
             try:
                 import sqlite3
-                from .config import DATABASE_PATH
+                try:
+                    from .config import DATABASE_PATH
+                except ImportError:
+                    from config import DATABASE_PATH
                 
                 # 获取用户画像
                 try:
@@ -1579,14 +2176,14 @@ async def get_enhanced_financial_recommendations(user_id: int):
                         'interest_rate': product['interest_rate'],
                         'min_amount': product['min_amount'],
                         'max_amount': product['max_amount'],
-                        'term_months': product.get('term_months', 12),
+                        'term_months': product['term_months'] if 'term_months' in product.keys() else 12,
                         'risk_level': product['risk_level'],
-                        'description': product.get('description', ''),
+                        'description': product['description'] if 'description' in product.keys() else '',
                         'recommendation_score': min(score, 1.0),
                         'reason': f"匹配您的{risk_tolerance}风险偏好和{spending_level}消费水平"
                     })
                 
-                # 排序
+                # 排序 (recs是字典列表，可以用.get())
                 recs.sort(key=lambda x: x.get('recommendation_score', 0), reverse=True)
             except Exception as e:
                 print(f"获取额外产品时出错: {e}")

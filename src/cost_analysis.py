@@ -21,8 +21,14 @@ except ImportError:
     HAS_SEABORN = False
     print("Warning: seaborn not available, some visualization features may be limited")
 
-from .database import db_manager
-from .config import CHART_CONFIG
+try:
+    from .database import db_manager
+except ImportError:
+    from database import db_manager
+try:
+    from .config import CHART_CONFIG
+except ImportError:
+    from config import CHART_CONFIG
 
 # 设置中文字体
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'DejaVu Sans']
@@ -381,19 +387,22 @@ class CostAnalyzer:
     
     def get_category_analysis(self, user_id: int, start_date: datetime = None, end_date: datetime = None) -> Dict[str, Any]:
         """获取分类消费分析"""
-        if start_date and end_date:
-            bills = db_manager.get_bills_by_date_range(user_id, start_date, end_date)
-        else:
-            bills = db_manager.get_bills(user_id, limit=1000)
-        
-        if not bills:
+        # 使用直接SQL查询避免SQLAlchemy会话问题
+        try:
+            from fix_sqlalchemy_session import get_bills_simple
+            bills_data = get_bills_simple(user_id, limit=10000)
+            if not bills_data:
+                return {'categories': [], 'total_amount': 0}
+            
+            # 转换为DataFrame
+            df = pd.DataFrame([{
+                'category': b.get('category', '未知'),
+                'amount': float(b.get('amount', 0)),
+                'consume_time': b.get('consume_time', '')
+            } for b in bills_data])
+        except Exception as e:
+            print(f"获取账单数据失败: {e}")
             return {'categories': [], 'total_amount': 0}
-        
-        df = pd.DataFrame([{
-            'category': bill.category,
-            'amount': bill.amount,
-            'consume_time': bill.consume_time
-        } for bill in bills])
         
         # 按类别统计
         category_stats = df.groupby('category').agg({
@@ -415,36 +424,74 @@ class CostAnalyzer:
     
     def get_trend_analysis(self, user_id: int, period: str = 'monthly') -> Dict[str, Any]:
         """获取趋势分析"""
-        if period == 'monthly':
-            # 获取月度数据
-            current_year = datetime.now().year
-            monthly_data = db_manager.get_monthly_spending(user_id, current_year)
+        # 使用直接SQL查询
+        try:
+            from fix_sqlalchemy_session import get_bills_simple
+            bills_data = get_bills_simple(user_id, limit=10000)
+            if not bills_data:
+                return {'period': period, 'data': [], 'total_amount': 0}
+            
+            df = pd.DataFrame([{
+                'consume_time': b.get('consume_time', ''),
+                'amount': float(b.get('amount', 0))
+            } for b in bills_data])
+            
+            df['consume_time'] = pd.to_datetime(df['consume_time'], errors='coerce')
+            df = df.dropna(subset=['consume_time'])
+        except Exception as e:
+            print(f"获取账单数据失败: {e}")
+            return {'period': period, 'data': [], 'total_amount': 0}
+        
+        if period == 'monthly' or period == 'month':
+            # 按月聚合
+            df['month'] = df['consume_time'].dt.to_period('M')
+            monthly_data = df.groupby('month')['amount'].sum().reset_index()
+            monthly_data['month_str'] = monthly_data['month'].astype(str)
             
             return {
                 'period': 'monthly',
-                'data': monthly_data,
-                'total_amount': sum(item['total_amount'] for item in monthly_data),
-                'avg_monthly': sum(item['total_amount'] for item in monthly_data) / len(monthly_data) if monthly_data else 0
+                'data': {row['month_str']: row['amount'] for _, row in monthly_data.iterrows()},
+                'total_amount': monthly_data['amount'].sum()
             }
-        elif period == 'weekly':
-            # 获取周度数据
-            bills = db_manager.get_bills(user_id, limit=1000)
-            if not bills:
-                return {'period': 'weekly', 'data': [], 'total_amount': 0}
-            
-            df = pd.DataFrame([{
-                'consume_time': bill.consume_time,
-                'amount': bill.amount
-            } for bill in bills])
-            
+        elif period == 'weekly' or period == 'week':
+            # 按周聚合
             df['week'] = df['consume_time'].dt.to_period('W')
             weekly_data = df.groupby('week')['amount'].sum().reset_index()
             weekly_data['week_str'] = weekly_data['week'].astype(str)
             
             return {
                 'period': 'weekly',
-                'data': weekly_data.to_dict('records'),
+                'data': {row['week_str']: row['amount'] for _, row in weekly_data.iterrows()},
                 'total_amount': weekly_data['amount'].sum()
+            }
+        elif period == 'day' or period == 'daily':
+            # 按日聚合
+            df['day'] = df['consume_time'].dt.date
+            daily_data = df.groupby('day')['amount'].sum().reset_index()
+            daily_data['day_str'] = daily_data['day'].astype(str)
+            
+            return {
+                'period': 'daily',
+                'data': {row['day_str']: row['amount'] for _, row in daily_data.iterrows()},
+                'total_amount': daily_data['amount'].sum()
+            }
+        elif period == 'year' or period == 'yearly':
+            # 按年聚合
+            df['year'] = df['consume_time'].dt.year
+            yearly_data = df.groupby('year')['amount'].sum().reset_index()
+            yearly_data['year_str'] = yearly_data['year'].astype(str)
+            
+            return {
+                'period': 'yearly',
+                'data': {row['year_str']: row['amount'] for _, row in yearly_data.iterrows()},
+                'total_amount': yearly_data['amount'].sum()
+            }
+        elif period == 'all':
+            # 全部数据
+            return {
+                'period': 'all',
+                'data': {'全部': df['amount'].sum()},
+                'total_amount': df['amount'].sum()
             }
         
         return {'period': period, 'data': [], 'total_amount': 0}

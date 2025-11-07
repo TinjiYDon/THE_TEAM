@@ -9,6 +9,7 @@ import {
   GiftOutlined,
   TeamOutlined,
   HeartOutlined,
+  ExperimentOutlined,
   UserOutlined,
   LogoutOutlined,
   LoginOutlined
@@ -25,6 +26,7 @@ const menuItems = [
   { key: '/ai-assistant', icon: <RobotOutlined />, label: 'AI助手' },
   { key: '/recommendations', icon: <GiftOutlined />, label: '金融产品推荐' },
   { key: '/health', icon: <HeartOutlined />, label: '健康消费' },
+  { key: '/eval', icon: <ExperimentOutlined />, label: '评测与实验' },
 ]
 
 
@@ -143,29 +145,31 @@ function MainLayout() {
           <div style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>
             智能账单管理系统
           </div>
-          <Space>
-            <span style={{ color: '#999' }}>暗黑模式</span>
-            <Switch checked={darkMode} onChange={setDarkMode} />
+          <Space size="large">
+            <Space>
+              <span style={{ color: '#999' }}>暗黑模式</span>
+              <Switch checked={darkMode} onChange={setDarkMode} />
+            </Space>
+            {user ? (
+              <Dropdown menu={{
+                items: [
+                  { key: 'profile', icon: <UserOutlined />, label: '个人信息' },
+                  { type: 'divider' },
+                  { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
+                ],
+                onClick: handleUserMenuClick
+              }}>
+                <Space style={{ cursor: 'pointer' }}>
+                  <Avatar icon={<UserOutlined />} />
+                  <span>{user.username}</span>
+                </Space>
+              </Dropdown>
+            ) : (
+              <Button type="primary" icon={<LoginOutlined />} onClick={() => setLoginVisible(true)}>
+                登录
+              </Button>
+            )}
           </Space>
-          {user ? (
-            <Dropdown menu={{
-              items: [
-                { key: 'profile', icon: <UserOutlined />, label: '个人信息' },
-                { type: 'divider' },
-                { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
-              ],
-              onClick: handleUserMenuClick
-            }}>
-              <Space style={{ cursor: 'pointer' }}>
-                <Avatar icon={<UserOutlined />} />
-                <span>{user.username}</span>
-              </Space>
-            </Dropdown>
-          ) : (
-            <Button type="primary" icon={<LoginOutlined />} onClick={() => setLoginVisible(true)}>
-              登录
-            </Button>
-          )}
 
           <Modal
             title="用户登录"
