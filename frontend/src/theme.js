@@ -17,23 +17,25 @@ export const weBankTheme = {
     
     // 间距
     padding: 16,
+    colorBgLayout: '#f5f7fa',
   },
   components: {
     Layout: {
-      colorBgHeader: '#ffffff',
-      colorBgBody: '#f5f7fa',
+      headerBg: '#ffffff',
+      bodyBg: '#f5f7fa',
+      siderBg: '#ffffff',
     },
     Menu: {
-      colorItemText: '#333333',
-      colorItemTextSelected: '#E02020',
-      colorItemBgSelected: '#fff5f5',
+      itemColor: '#333333',
+      itemHoverColor: '#E02020',
+      itemSelectedColor: '#E02020',
+      itemSelectedBg: '#fff5f5',
     },
     Button: {
       borderRadius: 4,
-      primaryColor: '#ffffff',
     },
     Card: {
-      borderRadius: 8,
+      borderRadiusLG: 8,
       boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
     },
   },

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { Layout, Menu, Avatar, Dropdown, Space, Modal, Form, Input, Button, Switch, ConfigProvider, theme } from 'antd'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
@@ -97,8 +97,28 @@ function MainLayout() {
     }
   }
 
+  const layoutTheme = useMemo(() => ({
+    algorithm: darkMode ? theme.darkAlgorithm : theme.defaultAlgorithm,
+    token: {
+      colorBgLayout: darkMode ? '#1a1a1a' : '#f5f7fa',
+    },
+    components: {
+      Layout: {
+        headerBg: darkMode ? '#1f1f1f' : '#ffffff',
+        bodyBg: darkMode ? '#1a1a1a' : '#f5f7fa',
+        siderBg: darkMode ? '#171717' : '#ffffff',
+      },
+      Menu: {
+        itemColor: darkMode ? 'rgba(255,255,255,0.85)' : '#333333',
+        itemHoverColor: '#E02020',
+        itemSelectedColor: '#E02020',
+        itemSelectedBg: darkMode ? 'rgba(224,32,32,0.25)' : '#fff5f5',
+      },
+    },
+  }), [darkMode])
+
   return (
-    <ConfigProvider theme={{ algorithm: darkMode ? theme.darkAlgorithm : theme.defaultAlgorithm }}>
+    <ConfigProvider theme={layoutTheme}>
     <Layout style={{ minHeight: '100vh' }}>
       <Sider
         collapsible
@@ -106,7 +126,6 @@ function MainLayout() {
         onCollapse={setCollapsed}
         width={200}
         style={{
-          background: '#ffffff',
           boxShadow: '2px 0 8px rgba(0,0,0,0.1)',
         }}
       >
@@ -135,7 +154,7 @@ function MainLayout() {
       </Sider>
       <Layout>
         <Header style={{ 
-          background: 'transparent', 
+          background: darkMode ? '#1f1f1f' : '#ffffff', 
           padding: '0 24px',
           display: 'flex',
           justifyContent: 'space-between',

@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react'
-import { Card, Row, Col, Form, Input, Button, Alert, Progress, Statistic, message, Modal } from 'antd'
+import React, { useEffect, useState, useCallback } from 'react'
+import { Card, Row, Col, Form, Input, InputNumber, Button, Alert, Progress, Statistic, message, Modal } from 'antd'
 import { DollarOutlined, WarningOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import api from '../utils/api'
 
@@ -9,12 +9,7 @@ function Health() {
   const [loading, setLoading] = useState(false)
   const [alerts, setAlerts] = useState([])
 
-  useEffect(() => {
-    loadBudgets()
-    loadAlerts()
-  }, [])
-
-  const loadBudgets = async () => {
+  const loadBudgets = useCallback(async () => {
     try {
       const res = await api.get('/budgets?user_id=1')
       if (res.success && res.data) {
@@ -23,9 +18,9 @@ function Health() {
     } catch (error) {
       console.error('加载预算失败:', error)
     }
-  }
+  }, [])
 
-  const loadAlerts = async () => {
+  const loadAlerts = useCallback(async () => {
     try {
       const res = await api.get('/budgets/alerts?user_id=1')
       if (res.success && res.data) {
@@ -34,7 +29,21 @@ function Health() {
     } catch (error) {
       console.error('加载预警失败:', error)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    loadBudgets()
+    loadAlerts()
+  }, [loadBudgets, loadAlerts])
+
+  useEffect(() => {
+    const handler = () => {
+      loadBudgets()
+      loadAlerts()
+    }
+    window.addEventListener('budget-updated', handler)
+    return () => window.removeEventListener('budget-updated', handler)
+  }, [loadBudgets, loadAlerts])
 
   const handleCreateBudget = async (values) => {
     try {
@@ -48,6 +57,9 @@ function Health() {
         message.success('预算设置成功！')
         form.resetFields()
         loadBudgets()
+        try {
+          window.dispatchEvent(new CustomEvent('budget-updated'))
+        } catch {}
       }
     } catch (error) {
       message.error('设置预算失败')
@@ -89,7 +101,12 @@ function Health() {
                   { type: 'number', min: 0.01, message: '预算必须大于0' }
                 ]}
               >
-                <Input type="number" placeholder="输入月度预算" step="0.01" />
+                <InputNumber
+                  placeholder="输入月度预算"
+                  min={0.01}
+                  step={0.01}
+                  style={{ width: '100%' }}
+                />
               </Form.Item>
               <Form.Item>
                 <Button type="primary" htmlType="submit" block>

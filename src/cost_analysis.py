@@ -65,6 +65,17 @@ class CostAnalyzer:
             'category': bill.category,
             'payment_method': bill.payment_method
         } for bill in bills])
+
+        # 统一数据格式，避免后续统计异常
+        df['consume_time'] = pd.to_datetime(df['consume_time'], errors='coerce')
+        df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0.0)
+        df = df.dropna(subset=['consume_time'])
+        if df.empty:
+            return {
+                'summary': {'total_amount': 0, 'total_count': 0, 'avg_amount': 0},
+                'charts': {},
+                'insights': []
+            }
         
         # 基础统计
         summary = self._calculate_summary(df)
@@ -397,9 +408,15 @@ class CostAnalyzer:
             # 转换为DataFrame
             df = pd.DataFrame([{
                 'category': b.get('category', '未知'),
-                'amount': float(b.get('amount', 0)),
+                'amount': b.get('amount', 0),
                 'consume_time': b.get('consume_time', '')
             } for b in bills_data])
+
+            df['consume_time'] = pd.to_datetime(df['consume_time'], errors='coerce')
+            df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0.0)
+            df = df.dropna(subset=['consume_time'])
+            if df.empty:
+                return {'categories': [], 'total_amount': 0}
         except Exception as e:
             print(f"获取账单数据失败: {e}")
             return {'categories': [], 'total_amount': 0}
@@ -433,10 +450,11 @@ class CostAnalyzer:
             
             df = pd.DataFrame([{
                 'consume_time': b.get('consume_time', ''),
-                'amount': float(b.get('amount', 0))
+                'amount': b.get('amount', 0)
             } for b in bills_data])
             
             df['consume_time'] = pd.to_datetime(df['consume_time'], errors='coerce')
+            df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0.0)
             df = df.dropna(subset=['consume_time'])
         except Exception as e:
             print(f"获取账单数据失败: {e}")

@@ -5,11 +5,7 @@ import api from '../utils/api'
 import { getCurrentUserId, getCurrentCity } from '../utils/session'
 import { useNavigate, useParams } from 'react-router-dom'
 
-function Groups() {
-  const { id } = useParams()
-  if (id) {
-    return <GroupDetail />
-  }
+function GroupsList() {
   const [loading, setLoading] = useState(false)
   const [groups, setGroups] = useState([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -163,6 +159,14 @@ function Groups() {
   )
 }
 
+function GroupsPage() {
+  const { id } = useParams()
+  if (id) {
+    return <GroupDetail />
+  }
+  return <GroupsList />
+}
+
 export function GroupDetail() {
   const { id } = useParams()
   const [loading, setLoading] = useState(false)
@@ -289,5 +293,4 @@ export function GroupDetail() {
   )
 }
 
-export default Groups
-
+export default GroupsPage

@@ -30,6 +30,21 @@ class UserProfiler:
         # 初始化jieba
         jieba.initialize()
     
+    def _to_native(self, value: Any) -> Any:
+        """递归将 numpy / pandas 类型转换为原生 Python 类型，便于 FastAPI 返回 JSON。"""
+        if isinstance(value, (np.integer, )):
+            return int(value)
+        if isinstance(value, (np.floating, )):
+            return float(value)
+        if isinstance(value, (np.ndarray, )):
+            return value.tolist()
+        if isinstance(value, (pd.Timestamp, )):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {k: self._to_native(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [self._to_native(v) for v in value]
+        return value
     def generate_user_profile(self, user_id: int) -> Dict[str, Any]:
         """生成用户画像"""
         # 获取用户消费数据（使用直接SQL查询避免会话问题）
@@ -57,6 +72,14 @@ class UserProfiler:
             'category': bill.get('category', '未知'),
             'payment_method': bill.get('payment_method', '')
         } for bill in bills_data])
+
+        # 统一数据类型，防止后续 .dt / 数值运算报错
+        df['consume_time'] = pd.to_datetime(df['consume_time'], errors='coerce')
+        df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0.0)
+        df = df.dropna(subset=['consume_time'])
+        
+        if df.empty:
+            return self._get_default_profile(user_id)
         
         # 生成各种画像特征
         profile = {
@@ -71,6 +94,8 @@ class UserProfiler:
             'recommendation_tags': self._generate_recommendation_tags(df)
         }
         
+        profile = self._to_native(profile)
+
         # 保存用户画像到数据库
         self._save_user_profile(user_id, profile)
         
@@ -366,7 +391,7 @@ class RecommendationEngine:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM financial_products LIMIT 100")
-            products_rows = cursor.fetchall()
+            products_rows = [dict(row) for row in cursor.fetchall()]
             conn.close()
             
             if not products_rows:
@@ -509,6 +534,12 @@ class RecommendationEngine:
             return []
         
         recommendations = []
+
+        df['consume_time'] = pd.to_datetime(df['consume_time'], errors='coerce')
+        df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0.0)
+        df = df.dropna(subset=['consume_time'])
+        if df.empty:
+            return recommendations
         
         # 基于消费类别的建议
         category_data = df.groupby('category')['amount'].sum().sort_values(ascending=False)
@@ -547,7 +578,7 @@ class RecommendationEngine:
                 'action': '制定消费计划，减少冲动消费'
             })
         
-        return recommendations
+        return [self._to_native(item) for item in recommendations]
 
 
 class IntelligentAnalyzer:

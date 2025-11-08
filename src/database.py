@@ -366,12 +366,30 @@ class DatabaseManager:
             session.add(budget)
             session.commit()
             session.refresh(budget)
-            return budget
+            return {
+                "id": budget.id,
+                "user_id": budget.user_id,
+                "category": budget.category,
+                "monthly_budget": float(budget.monthly_budget or 0),
+                "current_spent": float(budget.current_spent or 0),
+                "alert_threshold": float(budget.alert_threshold or 0),
+            }
 
-    def get_budgets(self, user_id: int) -> List[UserBudget]:
+    def get_budgets(self, user_id: int) -> List[Dict[str, Any]]:
         """获取用户预算列表"""
         with get_db_session() as session:
-            return session.query(UserBudget).filter(UserBudget.user_id == user_id).all()
+            rows = session.query(UserBudget).filter(UserBudget.user_id == user_id).all()
+            return [
+                {
+                    "id": row.id,
+                    "user_id": row.user_id,
+                    "category": row.category,
+                    "monthly_budget": float(row.monthly_budget or 0),
+                    "current_spent": float(row.current_spent or 0),
+                    "alert_threshold": float(row.alert_threshold or 0),
+                }
+                for row in rows
+            ]
 
     def get_budget_alerts(self, user_id: int) -> List[Dict[str, Any]]:
         """获取预算预警"""

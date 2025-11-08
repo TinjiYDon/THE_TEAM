@@ -165,9 +165,31 @@ function Assistant() {
   const [cohortDim, setCohortDim] = useState('city')
   const [summaryCard, setSummaryCard] = useState(null)
   const [anomalyCount, setAnomalyCount] = useState(0)
+const INSIGHT_MEMORY_KEY = 'assistant_join_modal_shown'
   const isDark = (() => { try { return localStorage.getItem('pref_dark_mode') === '1' } catch { return false } })()
 
   const userId = useMemo(() => getCurrentUserId(), [])
+const [insightShown, setInsightShown] = useState(() => {
+  try {
+    return sessionStorage.getItem(INSIGHT_MEMORY_KEY) === '1'
+  } catch {
+    return false
+  }
+})
+
+const markInsightShown = () => {
+  setInsightShown(true)
+  try {
+    sessionStorage.setItem(INSIGHT_MEMORY_KEY, '1')
+  } catch {}
+}
+
+const openJoinModal = (mark = true) => {
+  if (mark && !insightShown) {
+    markInsightShown()
+  }
+  setJoinModal(true)
+}
 
   useEffect(() => {
     loadData()
@@ -267,8 +289,8 @@ function Assistant() {
       const insightData = ins.data?.data || ins.data || ins
       setInsight(insightData)
       console.log('🍽️ Insight data:', insightData)
-      if (insightData?.trigger === true) {
-        setJoinModal(true)
+    if (insightData?.trigger === true && !insightShown) {
+      openJoinModal()
       }
 
       const trendList = await loadBasicAnalysis()
@@ -320,13 +342,15 @@ function Assistant() {
               try {
                 const ins = await api.get('/insight/dining-bias', { params: { user_id: userId, city } })
                 setInsight(ins.data || ins)
-                if ((ins.data?.trigger ?? ins.trigger) === true) setJoinModal(true)
+                if ((ins.data?.trigger ?? ins.trigger) === true) {
+                  openJoinModal(false)
+                }
                 else message.info('当前未触发餐饮偏好阈值')
               } catch {
                 message.error('检测失败')
               }
             }}>重新检测弹窗</Button>
-            <Button type="dashed" onClick={() => setJoinModal(true)}>测试弹窗</Button>
+            <Button type="dashed" onClick={() => openJoinModal(false)}>测试弹窗</Button>
           </Space>
         </div>
 
@@ -466,13 +490,34 @@ function Assistant() {
                 try {
                   const r = await api.post('/analytics/budget-optimize', { user_id: userId, min_saving_rate: 0.1 })
                   const d = r.data?.data || r.data || r
-                  Modal.info({ title: '预算建议', width: 520, content: (
-                    <div>
-                      <div style={{ marginBottom: 8 }}>最低储蓄：¥{(d.min_saving || 0).toFixed?.(2) || d.min_saving || 0}</div>
-                      <pre style={{ background: '#f7f7f7', padding: 12, borderRadius: 6, maxHeight: 300, overflow: 'auto' }}>{JSON.stringify(d.suggestion || {}, null, 2)}</pre>
-                    </div>
-                  ) })
-                } catch {
+                  const suggestion = d.suggestion || {}
+                  Modal.confirm({
+                    title: '预算建议',
+                    width: 520,
+                    okText: '应用预算',
+                    cancelText: '仅查看',
+                    content: (
+                      <div>
+                        <div style={{ marginBottom: 8 }}>最低储蓄：¥{(d.min_saving || 0).toFixed?.(2) || d.min_saving || 0}</div>
+                        <pre style={{ background: '#f7f7f7', padding: 12, borderRadius: 6, maxHeight: 300, overflow: 'auto' }}>{JSON.stringify(suggestion, null, 2)}</pre>
+                      </div>
+                    ),
+                    onOk: async () => {
+                      try {
+                        await api.post('/analytics/actions/apply-budget', { user_id: userId, suggestion })
+                        message.success('预算建议已应用')
+                        try {
+                          window.dispatchEvent(new CustomEvent('budget-updated'))
+                        } catch {}
+                      } catch (err) {
+                        console.error('应用预算失败:', err)
+                        message.error('应用预算失败')
+                        throw err
+                      }
+                    },
+                  })
+                } catch (err) {
+                  console.error('预算优化失败:', err)
                   message.error('预算优化失败')
                 }
               }}>一键生成预算建议</Button>

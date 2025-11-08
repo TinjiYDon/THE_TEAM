@@ -166,13 +166,12 @@ function AIAssistant() {
             </Space>
           </div>
 
-          <Input.Group compact>
+          <Space.Compact style={{ width: '100%' }}>
             <Input
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onPressEnter={handleSend}
               placeholder="输入您的问题..."
-              style={{ flex: 1 }}
               disabled={loading}
             />
             <Button
@@ -183,7 +182,7 @@ function AIAssistant() {
             >
               发送
             </Button>
-          </Input.Group>
+          </Space.Compact>
         </Space>
       </Card>
     </div>

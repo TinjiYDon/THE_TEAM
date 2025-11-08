@@ -14,7 +14,7 @@ const EvalPage = lazy(() => import('./pages/Eval'))
 
 function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Suspense fallback={<div style={{ padding: 24 }}>加载中...</div>}>
         <Routes>
           <Route path="/" element={<MainLayout />}>
