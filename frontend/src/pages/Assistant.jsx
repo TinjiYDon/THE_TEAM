@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import PropTypes from 'prop-types'
-import { Card, Space, Segmented, Button, Modal, Alert, message, Row, Col, Tabs, Spin, Progress, Statistic } from 'antd'
+import { Card, Space, Segmented, Button, Modal, Alert, message, Row, Col, Tabs, Spin, Progress, Statistic, Typography } from 'antd'
 // 改用recharts替代@ant-design/charts，更稳定
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell, ResponsiveContainer } from 'recharts'
 import api from '../utils/api'
@@ -8,6 +8,8 @@ import { getCurrentCity, getCurrentUserId, setCurrentCity } from '../utils/sessi
 
 // 图表颜色
 const COLORS = ['#E02020', '#1890ff', '#52c41a', '#faad14', '#722ed1']
+
+const { Text } = Typography
 
 // 子组件：本月摘要卡
 function SummaryCard({ summaryCard, anomalyCount }) {
@@ -24,30 +26,35 @@ function SummaryCard({ summaryCard, anomalyCount }) {
   }
 
   return (
-    <Card>
-      <Row gutter={16}>
+    <Card
+      bodyStyle={{
+        background: 'linear-gradient(135deg, rgba(224,32,32,0.08) 0%, rgba(50,109,255,0.08) 100%)',
+        borderRadius: 12,
+        padding: 24,
+      }}
+    >
+      <Row gutter={[16, 16]}>
         <Col xs={24} md={8}>
-          <Statistic
-            title="本月总消费"
-            value={Number.parseFloat(summaryCard?.total || 0).toFixed(2)}
-            prefix="¥"
-            valueStyle={{ color: '#E02020', fontSize: 22, fontWeight: 700 }}
-          />
-        </Col>
-        <Col xs={24} md={8}>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 20, fontWeight: 700, color: getMomColor(summaryCard?.mom) }}>
-              {getMomDisplay(summaryCard?.mom)}
-            </div>
-            <div style={{ color: '#999', marginTop: 4 }}>较上月环比</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <Text style={{ color: '#6b7088' }}>本月总消费</Text>
+            <span style={{ fontSize: 26, fontWeight: 700, color: '#E02020' }}>¥{Number.parseFloat(summaryCard?.total || 0).toFixed(2)}</span>
           </div>
         </Col>
         <Col xs={24} md={8}>
-          <Statistic
-            title="近30天异常次数"
-            value={anomalyCount}
-            valueStyle={{ color: anomalyCount > 0 ? '#faad14' : '#52c41a', fontSize: 20, fontWeight: 700 }}
-          />
+          <div style={{ textAlign: 'center' }}>
+            <Text style={{ color: '#6b7088' }}>较上月环比</Text>
+            <div style={{ fontSize: 22, fontWeight: 700, color: getMomColor(summaryCard?.mom), marginTop: 4 }}>
+              {getMomDisplay(summaryCard?.mom)}
+            </div>
+          </div>
+        </Col>
+        <Col xs={24} md={8}>
+          <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <Text style={{ color: '#6b7088' }}>近30天异常次数</Text>
+            <span style={{ fontSize: 22, fontWeight: 700, color: anomalyCount > 0 ? '#faad14' : '#52c41a' }}>
+              {anomalyCount}
+            </span>
+          </div>
         </Col>
       </Row>
     </Card>
@@ -160,7 +167,6 @@ function Assistant() {
   const [trendData, setTrendData] = useState([])
   const [health, setHealth] = useState(null)
   const [forecast, setForecast] = useState(null)
-  const [cohort, setCohort] = useState(null)
   const [cohortV2, setCohortV2] = useState(null)
   const [cohortDim, setCohortDim] = useState('city')
   const [summaryCard, setSummaryCard] = useState(null)
@@ -244,14 +250,6 @@ const openJoinModal = (mark = true) => {
     }
 
     try {
-      const ct = await api.get('/analytics/cohort-compare', { params: { user_id: userId, dim: 'city' } })
-      const cohortData = ct.data?.data || ct.data || ct
-      setCohort(cohortData)
-    } catch (e) {
-      console.error('同类对比加载失败:', e)
-    }
-
-    try {
       const cv2 = await api.get('/analytics/cohort-compare/v2', { params: { user_id: userId, dim: cohortDim } })
       const cohortV2Data = cv2.data?.data || cv2.data || cv2
       setCohortV2(cohortV2Data)
@@ -314,7 +312,7 @@ const openJoinModal = (mark = true) => {
   }
 
   const timelineLabel = useMemo(() => ({
-    day: '日', month: '月', year: '年', all: '全部'
+    day: '日', week: '周', month: '月', year: '年', all: '全部'
   }[period]), [period])
 
   // Recharts的雷达图数据格式
@@ -334,7 +332,7 @@ const openJoinModal = (mark = true) => {
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 'bold' }}>账单小助手</h1>
           <Space>
             <Segmented
-              options={[{label:'日', value:'day'},{label:'月', value:'month'},{label:'年', value:'year'},{label:'全部', value:'all'}]}
+              options={[{label:'日', value:'day'},{label:'周', value:'week'},{label:'月', value:'month'},{label:'年', value:'year'},{label:'全部', value:'all'}]}
               value={period}
               onChange={setPeriod}
             />
@@ -524,26 +522,6 @@ const openJoinModal = (mark = true) => {
               <Button onClick={loadData}>刷新预测</Button>
             </Space>
           </Space>
-        </Card>
-
-        {/* 同类人群对比 */}
-        <Card title="同类人群对比（按城市）">
-          {cohort?.city ? (
-            <>
-              <div style={{ color: '#666', marginBottom: 8 }}>城市：{cohort.city || '—'}，窗口：{cohort.window_days} 天</div>
-              <ResponsiveContainer width="100%" height={320}>
-                <BarChart data={(cohort.items || []).slice(0,8).map(it => ({ category: it.category, value: Math.round((it.diff_pct||0)*100) }))} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="category" />
-                  <YAxis label={{ value: '相对同类(%)', angle: -90, position: 'insideLeft' }} />
-                  <Tooltip />
-                  <Bar dataKey="value" fill="#E02020" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </>
-          ) : (
-            <div style={{ color: '#999' }}>暂无对比数据</div>
-          )}
         </Card>
 
         {/* 同类比对 2.0（城市/年龄/职业）*/}

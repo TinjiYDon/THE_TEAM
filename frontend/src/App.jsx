@@ -11,6 +11,13 @@ const Community = lazy(() => import('./pages/Community'))
 const Groups = lazy(() => import('./pages/Groups'))
 const Health = lazy(() => import('./pages/Health'))
 const EvalPage = lazy(() => import('./pages/Eval'))
+const Profile = lazy(() => import('./pages/Profile'))
+const Ranking = lazy(() => import('./pages/Ranking'))
+const MerchantDetail = lazy(() => import('./pages/MerchantDetail'))
+const MerchantDashboard = lazy(() => import('./pages/MerchantDashboard'))
+const Feedback = lazy(() => import('./pages/Feedback'))
+const WarningCenter = lazy(() => import('./pages/WarningCenter'))
+const WarningSettings = lazy(() => import('./pages/WarningSettings'))
 
 function App() {
   return (
@@ -29,7 +36,14 @@ function App() {
             <Route path="groups" element={<Groups />} />
             <Route path="groups/:id" element={<Groups />} />
             <Route path="health" element={<Health />} />
+            <Route path="profile" element={<Profile />} />
             <Route path="eval" element={<EvalPage />} />
+            <Route path="ranking" element={<Ranking />} />
+            <Route path="merchants/:merchantId" element={<MerchantDetail />} />
+            <Route path="merchants/dashboard" element={<MerchantDashboard />} />
+            <Route path="feedback" element={<Feedback />} />
+            <Route path="warnings" element={<WarningCenter />} />
+            <Route path="warning-settings" element={<WarningSettings />} />
           </Route>
         </Routes>
       </Suspense>

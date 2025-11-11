@@ -1,16 +1,25 @@
 """
 FastAPI主应用 - 账单查询与管理系统API
 """
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import uvicorn
 import os
 import random
+import asyncio
+import sqlite3
+import pandas as pd
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 # 导入自定义模块（使用绝对导入）
 try:
@@ -21,10 +30,14 @@ try:
     from .ai_services import user_profiler, recommendation_engine, intelligent_analyzer
     from .invoice_ocr import invoice_ocr_processor
     from .data_cleaning import data_cleaner
+    from .merchant_service import merchant_service
+    from .analytics_service import analytics_service
+    from .payment_service import payment_service
+    from .anti_fraud import anti_fraud_detector
     try:
-        from .config import HOST, PORT, API_V1_PREFIX, INSIGHT_DEFAULTS, ADMIN_CONFIG
+        from .config import HOST, PORT, API_V1_PREFIX, INSIGHT_DEFAULTS, ADMIN_CONFIG, DATABASE_PATH, EXPORTS_DIR
     except ImportError:
-        from config import HOST, PORT, API_V1_PREFIX, INSIGHT_DEFAULTS, ADMIN_CONFIG
+        from config import HOST, PORT, API_V1_PREFIX, INSIGHT_DEFAULTS, ADMIN_CONFIG, DATABASE_PATH, EXPORTS_DIR
 except ImportError:
     # 直接运行时使用绝对导入
     from database import db_manager, init_database
@@ -33,10 +46,74 @@ except ImportError:
     from ai_services import user_profiler, recommendation_engine, intelligent_analyzer
     from invoice_ocr import invoice_ocr_processor
     from data_cleaning import data_cleaner
-    from config import HOST, PORT, API_V1_PREFIX, INSIGHT_DEFAULTS, ADMIN_CONFIG
+    from merchant_service import merchant_service
+    from analytics_service import analytics_service
+    from payment_service import payment_service
+    from anti_fraud import anti_fraud_detector
+    from config import HOST, PORT, API_V1_PREFIX, INSIGHT_DEFAULTS, ADMIN_CONFIG, DATABASE_PATH, EXPORTS_DIR
 
 from fix_sqlalchemy_session import get_bills_simple, get_bill_by_id, create_bill_simple, get_spending_summary_simple
 import sqlite3
+
+
+def _prepare_bills_dataframe(user_id: int, limit: int = 5000) -> pd.DataFrame:
+    """构建账单导出所需的DataFrame"""
+    bills = get_bills_simple(user_id=user_id, limit=limit)
+    if not bills:
+        return pd.DataFrame()
+    df = pd.DataFrame([{
+        "ID": bill.get("id"),
+        "时间": bill.get("consume_time"),
+        "商家": bill.get("merchant") or "",
+        "金额": bill.get("amount") or 0,
+        "类别": bill.get("category") or "",
+        "支付方式": bill.get("payment_method") or "",
+        "备注": bill.get("description") or ""
+    } for bill in bills])
+    df["时间"] = pd.to_datetime(df["时间"], errors="coerce")
+    df["金额"] = pd.to_numeric(df["金额"], errors="coerce").fillna(0).round(2)
+    df = df.dropna(subset=["时间"])
+    df["时间"] = df["时间"].dt.strftime("%Y-%m-%d %H:%M:%S")
+    return df.sort_values("时间")
+
+
+def _render_table_image(df: pd.DataFrame, filepath):
+    """将账单列表渲染为长图"""
+    if df.empty:
+        raise ValueError("暂无账单数据")
+    columns = ["时间", "商家", "金额", "类别", "支付方式"]
+    display_df = df[columns].copy()
+    display_df["金额"] = display_df["金额"].apply(lambda x: f"¥{float(x):.2f}")
+    rows = display_df.values.tolist()
+    fig_height = max(3, len(rows) * 0.35 + 1.5)
+    fig, ax = plt.subplots(figsize=(12, fig_height))
+    ax.axis("off")
+    table = ax.table(cellText=rows, colLabels=columns, cellLoc="center", loc="upper center")
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 1.2)
+    ax.set_title("账单明细", fontsize=14, fontweight="bold", pad=20)
+    fig.savefig(filepath, dpi=200, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
+def _render_trend_image(trend_map: Dict[str, Any], period: str, filepath):
+    """将趋势分析渲染为图像"""
+    if not trend_map:
+        raise ValueError("暂无趋势数据")
+    labels = list(trend_map.keys())
+    values = [float(trend_map[k]) for k in labels]
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(labels, values, marker="o", color="#E02020", linewidth=2)
+    ax.fill_between(labels, values, color="#E02020", alpha=0.1)
+    ax.set_title(f"消费趋势（{period}）", fontsize=14, fontweight="bold", pad=16)
+    ax.set_xlabel("时间")
+    ax.set_ylabel("金额 (元)")
+    ax.grid(True, linestyle="--", alpha=0.4)
+    plt.xticks(rotation=45, ha="right")
+    fig.tight_layout()
+    fig.savefig(filepath, dpi=200, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -55,6 +132,86 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 注册异常处理器
+try:
+    from middleware.exceptions import (
+        business_exception_handler,
+        http_exception_handler,
+        validation_exception_handler,
+        general_exception_handler
+    )
+    from utils.exceptions import BusinessException
+    
+    app.add_exception_handler(BusinessException, business_exception_handler)
+    app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+    app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(Exception, general_exception_handler)
+except ImportError:
+    # 如果导入失败，使用默认异常处理
+    pass
+
+# 注册API路由
+try:
+    from api.v1 import register_routes
+    from api.v1 import api_router
+    register_routes()
+    app.include_router(api_router, prefix=API_V1_PREFIX)
+except ImportError as e:
+    print(f"警告: 无法导入API路由模块: {e}")
+    print("将使用main.py中的内联路由")
+
+# ========== 后台巡检任务：每2小时复评并通知（尊重用户偏好） ==========
+async def _notify_worker():
+    """
+    简化巡检：扫描未处理的新事件，按用户偏好通过邮件/企业微信通知
+    频率：启动后常驻，每2小时轮询一次
+    """
+    try:
+        from services.notify_service import notify_service
+        from config import DATABASE_PATH, NOTIFY_CONFIG
+    except ImportError:
+        from src.services.notify_service import notify_service
+        from src.config import DATABASE_PATH, NOTIFY_CONFIG
+
+    while True:
+        try:
+            conn = sqlite3.connect(str(DATABASE_PATH))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            # 取最近2小时内新事件（避免重复推送可在notify_logs去重，这里简化）
+            cursor.execute("""
+                SELECT ae.*, ap.channel_email, ap.channel_wecom, u.email as user_email
+                FROM alert_events ae
+                LEFT JOIN alert_prefs ap ON ap.user_id = ae.user_id
+                LEFT JOIN users u ON u.id = ae.user_id
+                WHERE ae.status = 'new' AND ae.created_at >= datetime('now','-2 hours')
+                ORDER BY ae.created_at DESC
+                LIMIT 200
+            """)
+            events = [dict(r) for r in cursor.fetchall()]
+            conn.close()
+
+            for ev in events:
+                title = ev.get("title") or "消费风险预警"
+                content = f"{ev.get('reason','')}"
+                # 邮件
+                if ev.get("channel_email") and ev.get("user_email"):
+                    notify_service.send_email(to_email=ev["user_email"], subject=title, content=content, event_id=ev["id"])
+                # 企业微信
+                webhook = NOTIFY_CONFIG.get("wecom_webhook")
+                if ev.get("channel_wecom") and webhook:
+                    notify_service.send_wecom(webhook_url=webhook, title=title, content=content, event_id=ev["id"])
+        except Exception as e:
+            # 静默错误，避免任务退出
+            print(f"[notify_worker] error: {e}")
+        # 休眠2小时
+        await asyncio.sleep(60 * 60 * 2)
+
+@app.on_event("startup")
+async def _startup_tasks():
+    # 启动后台通知巡检任务
+    asyncio.create_task(_notify_worker())
 
 # 数据模型定义
 class BillCreate(BaseModel):
@@ -217,6 +374,27 @@ async def startup_event():
             """)
         except Exception:
             pass
+        # 商家相关表（如果不存在则创建）
+        try:
+            # 读取数据库schema文件并执行
+            schema_file = (__import__('pathlib').Path(__file__).parent.parent / 'data' / 'database_schema.sql')
+            if schema_file.exists():
+                with open(schema_file, 'r', encoding='utf-8') as f:
+                    schema_sql = f.read()
+                    # 执行商家相关表的创建语句
+                    for statement in schema_sql.split(';'):
+                        statement = statement.strip()
+                        if statement and ('CREATE TABLE' in statement or 'CREATE INDEX' in statement or 'CREATE VIEW' in statement):
+                            if any(table in statement for table in ['merchants', 'merchant_info', 'merchant_rankings', 'merchant_sponsorships', 
+                                                                   'merchant_clicks', 'merchant_reviews', 'merchant_payments', 
+                                                                   'user_feedbacks', 'fraud_detection_logs']):
+                                try:
+                                    cur.execute(statement)
+                                except sqlite3.OperationalError as e:
+                                    # 表已存在或其他错误，忽略
+                                    pass
+        except Exception as e:
+            print(f"创建商家相关表时出错: {e}")
         conn.commit()
         conn.close()
     except Exception as _:
@@ -250,79 +428,28 @@ async def root():
 async def create_bill(bill: BillCreate, user_id: int = 1):
     """创建账单记录（带诈骗和过度消费预警）"""
     try:
+        # 即时预警：在清洗数据后进行统一评估
         # 数据清洗
         bill_data = data_cleaner.clean_bill_data(bill.dict())
         bill_data['user_id'] = user_id
         
-        # 诈骗和过度消费检测
-        alerts = []
-        warnings = []
-        
-        amount = float(bill_data.get('amount', 0))
-        
-        # 大额消费预警（≥1000元）
-        if amount >= 1000:
-            alerts.append({
-                "type": "large_amount",
-                "level": "warning",
-                "title": "大额消费预警",
-                "message": f"检测到单笔消费 ¥{amount:.2f} 元，超过大额阈值（¥1000），可能存在诈骗风险。",
-                "suggestions": [
-                    "请核对商家信息是否正确",
-                    "确认是否为本人操作",
-                    "如发现异常，请立即联系银行",
-                    "建议保存消费凭证"
-                ]
-            })
-        
-        # 检查短时间内频繁消费
-        recent_bills = get_bills_simple(user_id=user_id, limit=100)
-        if recent_bills:
-            from datetime import datetime, timedelta
-            now = datetime.now()
-            recent_count = 0
-            recent_total = 0
-            
-            for b in recent_bills:
-                consume_time = b.get('consume_time', '')
-                if isinstance(consume_time, str):
-                    try:
-                        bill_time = datetime.fromisoformat(consume_time.replace(' ', 'T'))
-                        if (now - bill_time).total_seconds() < 3600:  # 1小时内
-                            recent_count += 1
-                            recent_total += float(b.get('amount', 0))
-                    except:
-                        pass
-            
-            # 1小时内超过5笔或总额超过2000元
-            if recent_count >= 5:
-                warnings.append({
-                    "type": "frequent_transactions",
-                    "level": "warning",
-                    "title": "频繁消费预警",
-                    "message": f"检测到1小时内 {recent_count} 笔消费，可能存在过度消费风险。",
-                    "suggestions": [
-                        "请检查是否为必要消费",
-                        "建议暂停非必要消费",
-                        "合理规划消费预算"
-                    ]
-                })
-            
-            if recent_total >= 2000:
-                warnings.append({
-                    "type": "high_frequency_amount",
-                    "level": "warning",
-                    "title": "高频大额消费预警",
-                    "message": f"检测到1小时内消费总额 ¥{recent_total:.2f} 元，存在过度消费风险。",
-                    "suggestions": [
-                        "建议暂停非必要消费",
-                        "检查消费记录是否异常",
-                        "合理控制消费节奏"
-                    ]
-                })
+        # 近账单获取（用于规则评估）
+        recent_bills = get_bills_simple(user_id=user_id, limit=100) or []
+
+        # 统一评估
+        try:
+            from services.alert_service import alert_service
+        except ImportError:
+            from src.services.alert_service import alert_service  # 以防不同运行路径
+        eval_result = alert_service.evaluate_bill(user_id=user_id, bill=bill_data, recent_bills=recent_bills)
         
         # 创建账单
         created_bill = db_manager.create_bill(bill_data)
+
+        # 事件入库
+        event_id = None
+        if eval_result.get("level") in {"high", "medium"}:
+            event_id = alert_service.create_event(user_id=user_id, bill_id=created_bill.id, result=eval_result, event_type="rules")
         
         response = {
             "success": True,
@@ -338,11 +465,15 @@ async def create_bill(bill: BillCreate, user_id: int = 1):
             }
         }
         
-        # 如果有预警，添加到响应中
-        if alerts or warnings:
-            response["alerts"] = alerts
-            response["warnings"] = warnings
-            response["has_alerts"] = True
+        # 即时返回风险提示
+        response["risk"] = {
+            "level": eval_result.get("level"),
+            "score": eval_result.get("score"),
+            "title": eval_result.get("title"),
+            "reason": eval_result.get("reason"),
+            "evidence": eval_result.get("evidence"),
+            "event_id": event_id
+        }
         
         return response
     except Exception as e:
@@ -504,6 +635,47 @@ async def delete_bill(bill_id: int, user_id: int = 1):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除账单失败: {str(e)}")
+
+
+@app.get(f"{API_V1_PREFIX}/bills/export/excel")
+async def export_bills_excel(user_id: int = 1):
+    """导出账单 Excel"""
+    df = _prepare_bills_dataframe(user_id)
+    if df.empty:
+        raise HTTPException(status_code=404, detail="暂无账单数据可导出")
+    EXPORTS_DIR.mkdir(exist_ok=True)
+    filename = EXPORTS_DIR / f"bills_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    with pd.ExcelWriter(filename, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="账单明细")
+    return FileResponse(
+        filename,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=filename.name
+    )
+
+
+@app.get(f"{API_V1_PREFIX}/bills/export/image")
+async def export_bills_image(view: str = "list", period: str = "month", user_id: int = 1):
+    """导出账单长图（列表或趋势）"""
+    df = _prepare_bills_dataframe(user_id)
+    if df.empty:
+        raise HTTPException(status_code=404, detail="暂无账单数据可导出")
+    EXPORTS_DIR.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if view == "list":
+        filepath = EXPORTS_DIR / f"bills_list_{timestamp}.png"
+        _render_table_image(df, filepath)
+    elif view == "trend":
+        trend = cost_analyzer.get_trend_analysis(user_id, period)
+        trend_map = trend.get("data") if isinstance(trend, dict) else {}
+        if not trend_map:
+            raise HTTPException(status_code=404, detail="暂无趋势数据可导出")
+        filepath = EXPORTS_DIR / f"bills_trend_{period}_{timestamp}.png"
+        _render_trend_image(trend_map, period, filepath)
+    else:
+        raise HTTPException(status_code=400, detail="view 参数仅支持 list 或 trend")
+    return FileResponse(filepath, media_type="image/png", filename=filepath.name)
+
 
 # 智能查询API
 @app.post(f"{API_V1_PREFIX}/query")
@@ -1937,6 +2109,19 @@ class LoginRequest(BaseModel):
     username: str
     password: str = "demo"  # 演示环境简化
 
+
+class AccountSettingsUpdate(BaseModel):
+    city: Optional[str] = ""
+    job: Optional[str] = ""
+    budget_cycle: Optional[str] = "monthly"
+    notify_budget: Optional[bool] = True
+    notify_insight: Optional[bool] = True
+    notify_community: Optional[bool] = True
+
+
+class AccountRequestPayload(BaseModel):
+    note: Optional[str] = ""
+
 @app.post(f"{API_V1_PREFIX}/auth/login")
 async def login(request: LoginRequest):
     """登录（演示环境简化认证）"""
@@ -2002,6 +2187,64 @@ async def get_current_user(token: str = None):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取用户信息失败: {str(e)}")
+
+
+@app.get(f"{API_V1_PREFIX}/account/settings")
+async def account_get_settings(user_id: int = 1):
+    """获取个人中心资料与偏好"""
+    try:
+        preferences = db_manager.get_user_preferences(user_id)
+        profile = {
+            "username": f"user_{user_id}",
+            "email": "",
+            "phone": ""
+        }
+        try:
+            conn = sqlite3.connect(str(DATABASE_PATH))
+            cur = conn.cursor()
+            cur.execute("SELECT username, email, phone FROM users WHERE id=?", (user_id,))
+            row = cur.fetchone()
+            conn.close()
+            if row:
+                profile["username"] = row[0] or profile["username"]
+                profile["email"] = row[1] or ""
+                profile["phone"] = row[2] or ""
+        except Exception:
+            pass
+        return {"success": True, "data": {"profile": profile, "preferences": preferences}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取个人设置失败: {str(e)}")
+
+
+@app.put(f"{API_V1_PREFIX}/account/settings")
+async def account_update_settings(payload: AccountSettingsUpdate, user_id: int = 1):
+    """更新个人中心资料与通知偏好"""
+    try:
+        updated = db_manager.upsert_user_preferences(user_id, payload.dict())
+        return {"success": True, "data": updated}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"更新个人设置失败: {str(e)}")
+
+
+@app.post(f"{API_V1_PREFIX}/account/export")
+async def account_request_export(payload: AccountRequestPayload, user_id: int = 1):
+    """提交数据导出申请"""
+    try:
+        req = db_manager.create_user_request(user_id, "export", payload.note or "")
+        return {"success": True, "data": {"request_id": req.id, "status": req.status, "created_at": req.created_at}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"提交导出申请失败: {str(e)}")
+
+
+@app.post(f"{API_V1_PREFIX}/account/deactivate")
+async def account_request_deactivate(payload: AccountRequestPayload, user_id: int = 1):
+    """提交注销申请"""
+    try:
+        req = db_manager.create_user_request(user_id, "deactivate", payload.note or "")
+        return {"success": True, "data": {"request_id": req.id, "status": req.status, "created_at": req.created_at}}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"提交注销申请失败: {str(e)}")
+
 
 # 深度学习预测API
 @app.post(f"{API_V1_PREFIX}/ai/predict/totals")
@@ -2247,6 +2490,16 @@ async def get_enhanced_financial_recommendations(user_id: int):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取增强推荐失败: {str(e)}")
+
+# ========== 商家管理相关API ==========
+# 注意：商家、榜单、反馈相关API已迁移到 src/api/v1/ 目录下的独立路由文件
+# 如需查看这些API，请参考：
+# - src/api/v1/merchants.py - 商家管理API
+# - src/api/v1/rankings.py - 榜单API  
+# - src/api/v1/feedback.py - 反馈API
+
+# ========== 榜单更新定时任务API ==========
+# 注意：此API已迁移到 src/api/v1/rankings.py
 
 # 健康检查
 @app.get(f"{API_V1_PREFIX}/health")

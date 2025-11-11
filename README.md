@@ -10,6 +10,8 @@
 - **发票管理**：OCR自动识别发票信息并分类
 - **用户画像**：基于消费行为生成个性化画像
 - **智能推荐**：推荐合适的金融产品和服务
+- **即时预警 + 后台巡检（新增）**：账单创建时即时风险评估（高/中/低+证据），每2小时后台巡检补发通知（尊重阈值、通道开关、静默与频控）
+- **联邦学习（MVP骨架，新增）**：本地更新+服务端FedAvg聚合，支持差分隐私占位与模型版本记录
 
 ### 🤖 AI技术集成
 - **自然语言处理**：jieba分词 + 意图识别
@@ -31,6 +33,7 @@
 - **数据处理**：Pandas + NumPy
 - **可视化**：Matplotlib + Plotly
 - **AI/ML**：scikit-learn + jieba
+- **联邦学习（新增）**：FedAvg 聚合器 + 客户端模拟骨架，差分隐私与灰度发布预留
 - **数据清洗**：自定义清洗算法
 
 ### 前端技术栈
@@ -107,6 +110,16 @@ python run_server.py
 - 个性化建议
 
 ### 5. 数据清洗 (`src/data_cleaning.py`)
+### 6. 预警模块（新增）
+- `src/services/alert_service.py`：统一风险评估（规则打分→高/中/低）、证据结构与事件落库
+- `src/services/notify_service.py`：通知通道（邮件/企业微信机器人）与发送日志
+- `src/api/v1/alerts.py`：预警列表查询、标记已读/忽略
+- `src/api/v1/settings.py`：用户级预警偏好（阈值、通道开关、静默、频控）
+- 后台巡检（每2小时）：`src/main.py` 启动时注册后台任务，扫描新事件并触发通知
+
+### 7. 联邦学习模块（新增）
+- `src/fl/aggregator.py`：FedAvg 聚合器，模型版本记录（哈希+指标）
+- `src/fl/client_sim.py`：本机多客户端模拟更新（可替换为真实端）
 - 数据质量检测
 - 异常值识别
 - 数据标准化
@@ -136,6 +149,12 @@ python run_server.py
 - `GET /api/v1/invoices` - 获取发票列表
 - `GET /api/v1/invoices/statistics` - 发票统计
 
+### 预警与设置（新增）
+- `GET /api/v1/alerts` - 预警列表（支持按level筛选、分页）
+- `POST /api/v1/alerts/{event_id}/status` - 标记已读或忽略
+- `GET /api/v1/settings/alert_prefs` - 获取用户预警偏好
+- `POST /api/v1/settings/alert_prefs` - 保存用户预警偏好（阈值、通道开关、静默、频控）
+
 ## 使用示例
 
 ### 1. 智能查询示例
@@ -155,6 +174,7 @@ bill_data = {
     "payment_method": "微信"
 }
 response = requests.post("/api/v1/bills", json=bill_data)
+print(response.json()["risk"])  # 返回 { level, score, title, reason, evidence, event_id }
 ```
 
 ### 3. 获取分析报告示例
@@ -180,7 +200,17 @@ project/
 │   ├── cost_analysis.py   # 消费分析
 │   ├── invoice_ocr.py     # 发票OCR
 │   ├── ai_services.py     # AI服务
-│   └── data_cleaning.py   # 数据清洗
+│   ├── data_cleaning.py   # 数据清洗
+│   ├── services/
+│   │   ├── alert_service.py    # 预警服务（新增）
+│   │   └── notify_service.py   # 通知服务（新增）
+│   ├── api/
+│   │   └── v1/
+│   │       ├── alerts.py       # 预警API（新增）
+│   │       └── settings.py     # 设置API（新增）
+│   └── fl/
+│       ├── aggregator.py       # 联邦聚合器（新增）
+│       └── client_sim.py       # 客户端模拟（新增）
 ├── data/                  # 数据存储
 │   ├── bill_db.sqlite     # 数据库文件
 │   ├── models/            # AI模型
@@ -204,15 +234,29 @@ project/
 - [x] 推荐系统
 - [x] 数据清洗
 - [x] API接口开发
+- [x] 即时预警与后台巡检、预警中心/设置页、联邦学习MVP骨架
 
 ### 待开发功能 🚧
-- [ ] 前端界面开发
+- [ ] 前端界面开发（移动端适配、更多交互与图表）
 - [ ] 用户认证系统
 - [ ] 数据导入导出
 - [ ] 移动端适配
 - [ ] 性能优化
 - [ ] 单元测试
 - [ ] 部署配置
+
+## 通知与联邦学习配置（新增）
+
+### 通知配置
+- 环境变量：
+  - SMTP：`SMTP_HOST`、`SMTP_PORT`、`SMTP_USER`、`SMTP_PASS`、`FROM_EMAIL`
+  - 企业微信机器人：`WECOM_WEBHOOK`
+- 前端“预警设置”：开启邮件/企业微信通道、设置静默时段与频控上限
+
+### 联邦学习（MVP）
+- 训练：使用 `src/fl/client_sim.py` 在本机模拟多客户端更新
+- 聚合：使用 `src/fl/aggregator.py` 执行 FedAvg 并记录模型版本（哈希与指标）
+- 隐私：预留差分隐私与梯度裁剪开关，支持灰度发布与回滚
 
 ## 贡献指南
 

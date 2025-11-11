@@ -1,3 +1,4 @@
 {
-    "cmake.sourceDirectory": "C:/Users/lenovo/Documents/GitHub/-/PaddleOCR/deploy/cpp_infer"
+    "cmake.sourceDirectory": "C:/Users/lenovo/Documents/GitHub/-/PaddleOCR/deploy/cpp_infer",
+    "markdown.validate.enabled": true
 }

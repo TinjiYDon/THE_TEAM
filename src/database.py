@@ -16,14 +16,16 @@ try:
     from .models import (
         Base, Bill, Invoice, User, FinancialProduct, UserProfile,
         UserBudget, UserSubscription, OCRUsageQuota,
-        CommunityPost, PostComment, PostLike
+        CommunityPost, PostComment, PostLike,
+        UserPreference, UserRequestLog
     )
 except ImportError:
     from config import DATABASE_URL, DATABASE_PATH
     from models import (
         Base, Bill, Invoice, User, FinancialProduct, UserProfile,
         UserBudget, UserSubscription, OCRUsageQuota,
-        CommunityPost, PostComment, PostLike
+        CommunityPost, PostComment, PostLike,
+        UserPreference, UserRequestLog
     )
 from sqlalchemy import func
 
@@ -461,6 +463,80 @@ class DatabaseManager:
             session.commit()
             session.refresh(comment)
             return comment
+
+    def get_user_preferences(self, user_id: int) -> Dict[str, Any]:
+        """获取用户偏好设置"""
+        default = {
+            "user_id": user_id,
+            "city": "",
+            "job": "",
+            "budget_cycle": "monthly",
+            "notify_budget": True,
+            "notify_insight": True,
+            "notify_community": True,
+            "updated_at": datetime.now()
+        }
+        with get_db_session() as session:
+            pref = session.query(UserPreference).filter(UserPreference.user_id == user_id).first()
+            if not pref:
+                return default
+            return {
+                "user_id": pref.user_id,
+                "city": pref.city or "",
+                "job": pref.job or "",
+                "budget_cycle": pref.budget_cycle or "monthly",
+                "notify_budget": bool(pref.notify_budget),
+                "notify_insight": bool(pref.notify_insight),
+                "notify_community": bool(pref.notify_community),
+                "updated_at": pref.updated_at or datetime.now()
+            }
+
+    def upsert_user_preferences(self, user_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+        """更新或创建用户偏好设置"""
+        payload = {
+            "city": data.get("city", ""),
+            "job": data.get("job", ""),
+            "budget_cycle": data.get("budget_cycle", "monthly"),
+            "notify_budget": 1 if data.get("notify_budget", True) else 0,
+            "notify_insight": 1 if data.get("notify_insight", True) else 0,
+            "notify_community": 1 if data.get("notify_community", True) else 0,
+        }
+        with get_db_session() as session:
+            pref = session.query(UserPreference).filter(UserPreference.user_id == user_id).first()
+            if pref:
+                for key, value in payload.items():
+                    setattr(pref, key, value)
+                session.commit()
+                session.refresh(pref)
+            else:
+                pref = UserPreference(user_id=user_id, **payload)
+                session.add(pref)
+                session.commit()
+                session.refresh(pref)
+            return {
+                "user_id": pref.user_id,
+                "city": pref.city or "",
+                "job": pref.job or "",
+                "budget_cycle": pref.budget_cycle or "monthly",
+                "notify_budget": bool(pref.notify_budget),
+                "notify_insight": bool(pref.notify_insight),
+                "notify_community": bool(pref.notify_community),
+                "updated_at": pref.updated_at or datetime.now()
+            }
+
+    def create_user_request(self, user_id: int, request_type: str, detail: str = "") -> UserRequestLog:
+        """记录用户导出/注销等申请"""
+        with get_db_session() as session:
+            req = UserRequestLog(
+                user_id=user_id,
+                request_type=request_type,
+                detail=detail,
+                status="pending"
+            )
+            session.add(req)
+            session.commit()
+            session.refresh(req)
+            return req
 
 # 创建全局数据库管理器实例
 db_manager = DatabaseManager()

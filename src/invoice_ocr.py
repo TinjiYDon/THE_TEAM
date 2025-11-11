@@ -74,47 +74,68 @@ class InvoiceOCRProcessor:
             print("默认发票分类器训练完成")
     
     def _create_training_data(self) -> List[Dict[str, Any]]:
-        """创建训练数据"""
+        """创建训练数据（增强版，参考主流记账软件的分类）"""
         training_data = [
-            # 餐饮发票
+            # 餐饮发票（更多样本）
             {'text': '餐饮服务 星巴克 咖啡 35.50元', 'label': '餐饮'},
             {'text': '餐饮费 麦当劳 汉堡 28.00元', 'label': '餐饮'},
             {'text': '餐饮发票 肯德基 炸鸡 45.00元', 'label': '餐饮'},
             {'text': '餐厅消费 海底捞 火锅 168.00元', 'label': '餐饮'},
             {'text': '外卖费 美团 午餐 25.00元', 'label': '餐饮'},
+            {'text': '餐饮服务费 必胜客 披萨 89.00元', 'label': '餐饮'},
+            {'text': '餐饮 小食店 早餐 12.00元', 'label': '餐饮'},
+            {'text': '餐饮服务 奶茶店 饮品 18.00元', 'label': '餐饮'},
             
-            # 交通发票
+            # 交通发票（更多样本）
             {'text': '交通费 滴滴出行 打车 15.50元', 'label': '交通'},
             {'text': '出租车费 出租车 出行 22.00元', 'label': '交通'},
             {'text': '地铁费 地铁 通勤 6.00元', 'label': '交通'},
             {'text': '加油费 中石化 汽油 200.00元', 'label': '交通'},
             {'text': '停车费 停车场 停车 10.00元', 'label': '交通'},
+            {'text': '交通费 高德打车 网约车 35.00元', 'label': '交通'},
+            {'text': '公交费 公交卡 充值 50.00元', 'label': '交通'},
+            {'text': '高速费 高速公路 通行费 45.00元', 'label': '交通'},
             
-            # 购物发票
+            # 购物发票（更多样本）
             {'text': '商品销售 淘宝 网购 89.00元', 'label': '购物'},
             {'text': '零售商品 京东 电子产品 299.00元', 'label': '购物'},
             {'text': '超市购物 沃尔玛 日用品 156.00元', 'label': '购物'},
             {'text': '服装销售 优衣库 衣服 199.00元', 'label': '购物'},
             {'text': '百货商品 商场 化妆品 88.00元', 'label': '购物'},
+            {'text': '商品 拼多多 网购 39.00元', 'label': '购物'},
+            {'text': '零售 便利店 零食 25.00元', 'label': '购物'},
+            {'text': '购物 天猫 服装 168.00元', 'label': '购物'},
             
-            # 娱乐发票
+            # 娱乐发票（更多样本）
             {'text': '娱乐服务 电影院 电影票 35.00元', 'label': '娱乐'},
             {'text': 'KTV消费 钱柜 唱歌 128.00元', 'label': '娱乐'},
             {'text': '游戏充值 腾讯游戏 游戏币 50.00元', 'label': '娱乐'},
             {'text': '旅游服务 携程 酒店 299.00元', 'label': '娱乐'},
             {'text': '健身服务 健身房 会员费 200.00元', 'label': '娱乐'},
+            {'text': '娱乐 游乐园 门票 150.00元', 'label': '娱乐'},
+            {'text': '娱乐服务 音乐会 演出票 280.00元', 'label': '娱乐'},
+            {'text': '娱乐 剧本杀 游戏 88.00元', 'label': '娱乐'},
             
-            # 医疗发票
+            # 医疗发票（更多样本）
             {'text': '医疗服务 医院 挂号费 15.00元', 'label': '医疗'},
             {'text': '药品销售 药店 药品 45.00元', 'label': '医疗'},
             {'text': '体检费 体检中心 体检 200.00元', 'label': '医疗'},
             {'text': '医疗费 诊所 看病 80.00元', 'label': '医疗'},
+            {'text': '医疗服务 牙科 治疗费 500.00元', 'label': '医疗'},
+            {'text': '医疗 眼科 检查费 120.00元', 'label': '医疗'},
             
-            # 教育发票
+            # 教育发票（更多样本）
             {'text': '教育服务 培训机构 课程费 500.00元', 'label': '教育'},
             {'text': '图书销售 书店 书籍 68.00元', 'label': '教育'},
             {'text': '培训费 英语培训 学费 800.00元', 'label': '教育'},
             {'text': '考试费 考试中心 报名费 100.00元', 'label': '教育'},
+            {'text': '教育 在线课程 学费 299.00元', 'label': '教育'},
+            {'text': '教育服务 技能培训 培训费 1200.00元', 'label': '教育'},
+            
+            # 其他类别
+            {'text': '水电费 物业 水电 150.00元', 'label': '其他'},
+            {'text': '通讯费 中国移动 话费 50.00元', 'label': '其他'},
+            {'text': '服务费 银行 手续费 10.00元', 'label': '其他'},
         ]
         
         return training_data
@@ -145,15 +166,19 @@ class InvoiceOCRProcessor:
         }
     
     def _extract_invoice_info(self, ocr_text: str) -> Dict[str, Any]:
-        """从OCR文本中提取发票信息（增强规则）"""
+        """从OCR文本中提取发票信息（增强规则，参考企业级发票处理系统）"""
         info = {
             'merchant': '未知商家',
             'amount': 0.0,
             'invoice_time': datetime.now(),
             'invoice_no': None,              # 发票号码/代码
+            'invoice_code': None,            # 发票代码（新增）
             'tax_id': None,                  # 纳税人识别号/统一社会信用代码
             'buyer': None,                   # 购方
             'seller': None,                  # 销方
+            'invoice_type': None,            # 发票类型（增值税普通/专用发票等）
+            'tax_amount': None,              # 税额（新增）
+            'total_amount': None,            # 价税合计（新增）
             'description': ocr_text
         }
         
@@ -226,16 +251,40 @@ class InvoiceOCRProcessor:
                 except ValueError:
                     continue
 
-        # 提取发票号码/代码
+        # 提取发票号码和发票代码（增值税发票通常有代码和号码）
         invoice_no_patterns = [
-            r'(?:发票号码|发票代码|机打号码|号码)[：:]\s*([A-Za-z0-9\-]+)',
-            r'(?:No\.?|NO\.?|编号)[：:]?\s*([A-Za-z0-9\-]+)'
+            r'(?:发票号码|机打号码|号码)[：:]\s*([0-9]{8,12})',
+            r'(?:No\.?|NO\.?|编号)[：:]?\s*([0-9]{8,12})',
+            r'发票号码[：:]\s*(\d{8,12})'
         ]
         for pattern in invoice_no_patterns:
             m = re.search(pattern, ocr_text)
             if m:
                 info['invoice_no'] = m.group(1).strip()
                 break
+        
+        # 提取发票代码（通常12位数字）
+        invoice_code_patterns = [
+            r'(?:发票代码|代码)[：:]\s*([0-9]{10,12})',
+            r'发票代码[：:]\s*(\d{10,12})'
+        ]
+        for pattern in invoice_code_patterns:
+            m = re.search(pattern, ocr_text)
+            if m:
+                info['invoice_code'] = m.group(1).strip()
+                break
+        
+        # 识别发票类型
+        if '增值税专用发票' in ocr_text or '专用发票' in ocr_text:
+            info['invoice_type'] = '增值税专用发票'
+        elif '增值税普通发票' in ocr_text or '普通发票' in ocr_text:
+            info['invoice_type'] = '增值税普通发票'
+        elif '电子发票' in ocr_text:
+            info['invoice_type'] = '电子发票'
+        elif '定额发票' in ocr_text:
+            info['invoice_type'] = '定额发票'
+        elif '机打发票' in ocr_text:
+            info['invoice_type'] = '机打发票'
 
         # 提取纳税人识别号/统一社会信用代码
         tax_id_patterns = [
@@ -247,18 +296,54 @@ class InvoiceOCRProcessor:
                 info['tax_id'] = m.group(1).strip()
                 break
 
-        # 提取购方/销方
-        buyer_patterns = [r'(?:购方|购买方|买方)[：:]\s*([^\n\r]+)']
-        seller_patterns = [r'(?:销方|销售方|卖方)[：:]\s*([^\n\r]+)']
+        # 提取购方/销方（增强匹配）
+        buyer_patterns = [
+            r'(?:购方|购买方|买方|购买方名称)[：:]\s*([^\n\r]+)',
+            r'购买方[：:]\s*([^\n\r]{2,50})'
+        ]
+        seller_patterns = [
+            r'(?:销方|销售方|卖方|销售方名称)[：:]\s*([^\n\r]+)',
+            r'销售方[：:]\s*([^\n\r]{2,50})'
+        ]
         for pattern in buyer_patterns:
             m = re.search(pattern, ocr_text)
             if m:
-                info['buyer'] = m.group(1).strip()
+                info['buyer'] = m.group(1).strip()[:100]  # 限制长度
                 break
         for pattern in seller_patterns:
             m = re.search(pattern, ocr_text)
             if m:
-                info['seller'] = m.group(1).strip()
+                info['seller'] = m.group(1).strip()[:100]
+                break
+        
+        # 提取税额和价税合计（增值税发票）
+        tax_patterns = [
+            r'(?:税额|税金)[：:]\s*(\d+\.?\d*)',
+            r'税额[：:]\s*(\d+\.?\d*)\s*元'
+        ]
+        for pattern in tax_patterns:
+            m = re.search(pattern, ocr_text)
+            if m:
+                try:
+                    info['tax_amount'] = float(m.group(1))
+                except:
+                    pass
+                break
+        
+        total_patterns = [
+            r'(?:价税合计|合计|总计)[：:]\s*(\d+\.?\d*)',
+            r'价税合计[：:]\s*(\d+\.?\d*)\s*元'
+        ]
+        for pattern in total_patterns:
+            m = re.search(pattern, ocr_text)
+            if m:
+                try:
+                    info['total_amount'] = float(m.group(1))
+                    # 如果价税合计存在且大于金额，使用价税合计
+                    if info['total_amount'] > info['amount']:
+                        info['amount'] = info['total_amount']
+                except:
+                    pass
                 break
         
         return info
@@ -283,23 +368,37 @@ class InvoiceOCRProcessor:
             return self._rule_based_classification(ocr_text)
     
     def _rule_based_classification(self, ocr_text: str) -> str:
-        """基于规则的发票分类"""
+        """基于规则的发票分类（增强版，参考主流记账软件）"""
         text_lower = ocr_text.lower()
         
-        # 定义关键词映射
+        # 定义关键词映射（扩展版，参考支付宝、微信记账的分类）
         category_keywords = {
-            '餐饮': ['餐饮', '餐厅', '饭店', '咖啡', '奶茶', '快餐', '外卖', '美食', '星巴克', '麦当劳', '肯德基', '海底捞'],
-            '交通': ['交通', '打车', '出租车', '地铁', '公交', '加油', '停车', '出行', '滴滴', 'uber'],
-            '购物': ['购物', '超市', '商场', '网购', '淘宝', '京东', '衣服', '日用品', '商品', '零售'],
-            '娱乐': ['娱乐', '电影', '游戏', 'ktv', '旅游', '休闲', '健身', '电影院', '网吧'],
-            '医疗': ['医疗', '医院', '药店', '体检', '看病', '药品', '诊所', '卫生'],
-            '教育': ['教育', '培训', '学习', '书籍', '课程', '学校', '考试', '学费']
+            '餐饮': ['餐饮', '餐厅', '饭店', '咖啡', '奶茶', '快餐', '外卖', '美食', '星巴克', '麦当劳', 
+                    '肯德基', '海底捞', '必胜客', '小食', '饮品', '火锅', '烧烤', '小吃', '食堂'],
+            '交通': ['交通', '打车', '出租车', '地铁', '公交', '加油', '停车', '出行', '滴滴', 'uber',
+                    '高德', '网约车', '公交卡', '高速', '通行费', '火车', '飞机', '机票', '高铁'],
+            '购物': ['购物', '超市', '商场', '网购', '淘宝', '京东', '衣服', '日用品', '商品', '零售',
+                    '拼多多', '便利店', '天猫', '服装', '百货', '化妆品', '电器', '数码'],
+            '娱乐': ['娱乐', '电影', '游戏', 'ktv', '旅游', '休闲', '健身', '电影院', '网吧',
+                    '游乐园', '音乐会', '演出', '剧本杀', '桌游', '酒吧', 'spa', '按摩'],
+            '医疗': ['医疗', '医院', '药店', '体检', '看病', '药品', '诊所', '卫生', '牙科', '眼科',
+                    '治疗', '检查', '挂号', '手术'],
+            '教育': ['教育', '培训', '学习', '书籍', '课程', '学校', '考试', '学费', '在线课程',
+                    '技能培训', '辅导', '教材', '文具'],
+            '其他': ['水电', '物业', '通讯', '话费', '服务费', '银行', '手续费', '房租', '保险']
         }
         
-        # 计算每个类别的匹配分数
+        # 计算每个类别的匹配分数（加权）
         category_scores = {}
         for category, keywords in category_keywords.items():
-            score = sum(1 for keyword in keywords if keyword in text_lower)
+            score = 0
+            for keyword in keywords:
+                if keyword in text_lower:
+                    # 核心关键词权重更高
+                    if keyword in ['餐饮', '交通', '购物', '娱乐', '医疗', '教育']:
+                        score += 2
+                    else:
+                        score += 1
             category_scores[category] = score
         
         # 返回得分最高的类别

@@ -74,5 +74,87 @@ LOG_CONFIG = {
     "file": BASE_DIR / "logs" / "app.log"
 }
 
+# 支付配置
+PAYMENT_CONFIG = {
+    "wechat": {
+        "app_id": os.getenv("WECHAT_APP_ID", ""),
+        "mch_id": os.getenv("WECHAT_MCH_ID", ""),
+        "api_key": os.getenv("WECHAT_API_KEY", ""),
+        "cert_path": os.getenv("WECHAT_CERT_PATH", ""),
+        "notify_url": os.getenv("WECHAT_NOTIFY_URL", f"http://{HOST}:{PORT}{API_V1_PREFIX}/payment/wechat/notify")
+    },
+    "alipay": {
+        "app_id": os.getenv("ALIPAY_APP_ID", ""),
+        "private_key": os.getenv("ALIPAY_PRIVATE_KEY", ""),
+        "public_key": os.getenv("ALIPAY_PUBLIC_KEY", ""),
+        "notify_url": os.getenv("ALIPAY_NOTIFY_URL", f"http://{HOST}:{PORT}{API_V1_PREFIX}/payment/alipay/notify")
+    }
+}
+
+# 高德地图配置（预留）
+AMAP_CONFIG = {
+    "api_key": os.getenv("AMAP_API_KEY", ""),  # 高德地图API密钥
+    "web_api_key": os.getenv("AMAP_WEB_API_KEY", ""),  # Web端API密钥
+    "js_api_key": os.getenv("AMAP_JS_API_KEY", ""),  # JS API密钥
+    "base_url": "https://restapi.amap.com/v3"
+}
+
+# 商家榜单配置
+RANKING_CONFIG = {
+    "update_interval_hours": 2,  # 榜单更新间隔（小时）
+    "sponsor_display_count": 40,  # 赞助商家最多显示数量
+    "sponsor_per_page": 10,  # 每页显示赞助商家数量
+    "layout_ratio": 0.618,  # 黄金分割比（左侧热门商家占比）
+    "min_bid_amount": 100.0,  # 最低竞价金额（第一周）
+    "default_cpc_price": 1.0,  # 默认CPC单价（第二周起）
+    "min_daily_budget": 50.0,  # 最低每日预算
+    "max_daily_budget": 500.0,  # 最高每日预算
+    "cpc_price_by_category": {  # 按类别设置CPC单价
+        "餐饮": 1.5,
+        "购物": 1.2,
+        "娱乐": 1.0,
+        "医疗": 2.0,
+        "教育": 1.8,
+        "其他": 0.8
+    }
+}
+
+# 防刷检测配置
+ANTI_FRAUD_CONFIG = {
+    "click_rate_limit": 10,  # 单IP每分钟最大点击次数
+    "device_fingerprint_enabled": True,  # 启用设备指纹
+    "ip_whitelist": [],  # IP白名单
+    "risk_score_threshold": 0.7,  # 风险分数阈值（超过此值标记为可疑）
+    "auto_block_enabled": True,  # 自动封禁可疑点击
+    "review_required_score": 0.5  # 需要人工审核的风险分数阈值
+}
+
+# 商家认证配置
+MERCHANT_VERIFICATION_CONFIG = {
+    "required_fields": ["merchant_name", "business_license", "category"],
+    "license_image_required": True,
+    "auto_approve": False,  # 是否自动审核（生产环境建议False）
+    "verification_timeout_hours": 48  # 审核超时时间（小时）
+}
+
+# 反馈配置
+FEEDBACK_CONFIG = {
+    "admin_email": os.getenv("ADMIN_EMAIL", "admin@example.com"),
+    "auto_reply_enabled": True,  # 是否自动回复
+    "notification_enabled": True,  # 是否发送邮件通知
+    # SMTP可选配置（用于通知/反馈邮件）
+    "smtp_host": os.getenv("SMTP_HOST", ""),
+    "smtp_port": int(os.getenv("SMTP_PORT", "465")),
+    "smtp_user": os.getenv("SMTP_USER", ""),
+    "smtp_pass": os.getenv("SMTP_PASS", ""),
+    "from_email": os.getenv("FROM_EMAIL", os.getenv("SMTP_USER", "")),
+}
+
 # 确保日志目录存在
 (BASE_DIR / "logs").mkdir(exist_ok=True)
+
+# 通知配置（企业微信、公众号等）
+NOTIFY_CONFIG = {
+    "wecom_webhook": os.getenv("WECOM_WEBHOOK", ""),  # 企业微信群机器人Webhook
+    # 预留微信公众平台等后续接入
+}

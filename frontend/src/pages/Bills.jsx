@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Table, Button, Space, Tag, Input, Select, DatePicker, Upload, message, Modal, Descriptions, Alert, Dropdown, Checkbox, Card, Grid } from 'antd'
-import { PlusOutlined, UploadOutlined, SearchOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons'
+import { PlusOutlined, UploadOutlined, SearchOutlined, EyeOutlined, DeleteOutlined, FileExcelOutlined, PictureOutlined } from '@ant-design/icons'
 import api from '../utils/api'
+import { gradientBg } from '../theme'
 import dayjs from 'dayjs'
 // 暂时移除react-window虚拟滚动，使用普通渲染
 // import { FixedSizeList } from 'react-window'
@@ -187,6 +188,91 @@ function Bills() {
     URL.revokeObjectURL(url)
   }
 
+  const extractFilename = (disposition, fallback) => {
+    if (!disposition) return fallback
+    const match = disposition.match(/filename\*=UTF-8''(.+)|filename=\"(.+)\"/)
+    const encoded = match?.[1]
+    const quoted = match?.[2]
+    try {
+      if (encoded) return decodeURIComponent(encoded)
+      if (quoted) return quoted
+    } catch {}
+    return fallback
+  }
+
+  const exportExcel = async () => {
+    try {
+      const hide = message.loading('正在导出 Excel...', 0)
+      const res = await fetch(`/api/v1/bills/export/excel?user_id=${getCurrentUserId()}`)
+      hide()
+      if (!res.ok) {
+        throw new Error('导出失败')
+      }
+      const blob = await res.blob()
+      const disposition = res.headers.get('content-disposition')
+      const filename = extractFilename(disposition, `bills_${dayjs().format('YYYYMMDD_HHmmss')}.xlsx`)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+      message.success('Excel 导出成功')
+    } catch (error) {
+      console.error('导出 Excel 失败:', error)
+      message.error('导出 Excel 失败，请稍后再试')
+    }
+  }
+
+  const exportLongImage = async (view = 'list', trendPeriod = 'month') => {
+    try {
+      const params = new URLSearchParams({ user_id: getCurrentUserId(), view })
+      if (view === 'trend') {
+        params.set('period', trendPeriod)
+      }
+      const hide = message.loading('正在生成长图...', 0)
+      const res = await fetch(`/api/v1/bills/export/image?${params.toString()}`)
+      hide()
+      if (!res.ok) {
+        throw new Error('导出失败')
+      }
+      const blob = await res.blob()
+      const disposition = res.headers.get('content-disposition')
+      const fallbackName = view === 'trend'
+        ? `bills_trend_${trendPeriod}_${dayjs().format('YYYYMMDD_HHmmss')}.png`
+        : `bills_list_${dayjs().format('YYYYMMDD_HHmmss')}.png`
+      const filename = extractFilename(disposition, fallbackName)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+      message.success('长图导出成功')
+    } catch (error) {
+      console.error('导出长图失败:', error)
+      message.error('导出长图失败，请稍后再试')
+    }
+  }
+
+  const longImageMenu = {
+    items: [
+      { key: 'list', label: '账单列表长图' },
+      { key: 'trend:day', label: '趋势长图（日）' },
+      { key: 'trend:week', label: '趋势长图（周）' },
+      { key: 'trend:month', label: '趋势长图（月）' },
+      { key: 'trend:year', label: '趋势长图（年）' },
+    ],
+    onClick: ({ key }) => {
+      if (key === 'list') {
+        exportLongImage('list')
+      } else {
+        const [, period = 'month'] = key.split(':')
+        exportLongImage('trend', period)
+      }
+    }
+  }
+
   const handleViewBill = async (billId) => {
     try {
       const res = await api.get(`/bills/${billId}`)
@@ -326,6 +412,12 @@ function Bills() {
             添加账单
           </Button>
           <Button onClick={exportCSV}>导出 CSV</Button>
+          <Button icon={<FileExcelOutlined />} onClick={exportExcel}>
+            导出 Excel
+          </Button>
+          <Dropdown menu={longImageMenu} trigger={['click']}>
+            <Button icon={<PictureOutlined />}>导出长图</Button>
+          </Dropdown>
           <Dropdown
             menu={{
               items: columnMenuItems
@@ -353,7 +445,7 @@ function Bills() {
         </Space>
       </div>
 
-      <div style={{ marginBottom: 16, padding: 16, background: '#f5f7fa', borderRadius: 8 }}>
+      <div style={{ marginBottom: 16, padding: 16, borderRadius: 12, ...gradientBg }}>
         <Space>
           <Input
             placeholder="搜索商家"

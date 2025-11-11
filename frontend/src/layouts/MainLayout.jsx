@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { Layout, Menu, Avatar, Dropdown, Space, Modal, Form, Input, Button, Switch, ConfigProvider, theme } from 'antd'
+import { Layout, Menu, Avatar, Dropdown, Space, Modal, Form, Input, Button, Switch, ConfigProvider, theme, Typography } from 'antd'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   DashboardOutlined,
@@ -12,20 +12,31 @@ import {
   ExperimentOutlined,
   UserOutlined,
   LogoutOutlined,
-  LoginOutlined
+  LoginOutlined,
+  FireOutlined,
+  MessageOutlined,
+  AlertOutlined as AlertIcon,
+  SettingOutlined as SettingIcon
 } from '@ant-design/icons'
 import api from '../utils/api'
+import { gradientBg } from '../theme'
 
 const { Header, Sider, Content } = Layout
+const { Text } = Typography
 
 const menuItems = [
   { key: '/assistant', icon: <DashboardOutlined />, label: '账单小助手' },
   { key: '/bills', icon: <FileTextOutlined />, label: '账单管理' },
+  { key: '/ranking', icon: <FireOutlined />, label: '热门榜单' },
   { key: '/community', icon: <TeamOutlined />, label: '社群广场' },
   { key: '/groups', icon: <TeamOutlined />, label: '群组列表' },
   { key: '/ai-assistant', icon: <RobotOutlined />, label: 'AI助手' },
   { key: '/recommendations', icon: <GiftOutlined />, label: '金融产品推荐' },
   { key: '/health', icon: <HeartOutlined />, label: '健康消费' },
+  { key: '/feedback', icon: <MessageOutlined />, label: '意见反馈' },
+  { key: '/warnings', icon: <AlertIcon />, label: '预警中心' },
+  { key: '/warning-settings', icon: <SettingIcon />, label: '预警设置' },
+  { key: '/profile', icon: <UserOutlined />, label: '个人中心' },
   { key: '/eval', icon: <ExperimentOutlined />, label: '评测与实验' },
 ]
 
@@ -80,7 +91,7 @@ function MainLayout() {
       setUser(null)
       setLoginVisible(true)
     } else if (key === 'profile') {
-      // 显示个人信息
+      navigate('/profile')
     }
   }
 
@@ -159,11 +170,16 @@ function MainLayout() {
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+          boxShadow: darkMode ? '0 2px 8px rgba(0,0,0,0.25)' : '0 6px 16px rgba(24,39,75,0.08)'
         }}>
-          <div style={{ fontSize: 18, fontWeight: 'bold', color: '#333' }}>
-            智能账单管理系统
-          </div>
+          <Space direction="vertical" size={0}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: darkMode ? '#ffffff' : '#1f1f1f' }}>
+              智能账单管理系统
+            </div>
+            <Text style={{ fontSize: 12, color: darkMode ? '#9ca4c1' : '#6b7088' }}>
+              AI 助力消费洞察 · 智慧掌控财务健康
+            </Text>
+          </Space>
           <Space size="large">
             <Space>
               <span style={{ color: '#999' }}>暗黑模式</span>
